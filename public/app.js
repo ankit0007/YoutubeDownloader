@@ -5,6 +5,35 @@ const queueList = document.getElementById("queue-list");
 const loadQualityBtn = document.getElementById("load-quality-btn");
 const optionButtons = document.getElementById("option-buttons");
 const defaultLoadButtonText = loadQualityBtn.textContent;
+let openPreviewItemId = null;
+
+function closePreviewCard(card) {
+  const previewHolder = card.querySelector(".preview-holder");
+  const thumbImg = card.querySelector(".thumb");
+  const thumbOverlay = card.querySelector(".thumb-overlay");
+  const previewBtn = card.querySelector(".preview-btn");
+  if (!previewHolder || previewHolder.classList.contains("hidden")) {
+    return;
+  }
+
+  previewHolder.innerHTML = "";
+  previewHolder.classList.add("hidden");
+  if (thumbImg) thumbImg.classList.remove("hidden");
+  if (thumbOverlay) thumbOverlay.classList.remove("hidden");
+  if (previewBtn) {
+    const mode = previewBtn.dataset.previewType || "video";
+    previewBtn.textContent = mode === "audio" ? "Play Audio" : "Play Video";
+  }
+}
+
+function closeAllOtherPreviews(activeCard) {
+  const cards = document.querySelectorAll(".queue-item");
+  for (const card of cards) {
+    if (card !== activeCard) {
+      closePreviewCard(card);
+    }
+  }
+}
 
 async function fetchQueue() {
   const res = await fetch("/api/queue");
@@ -64,7 +93,7 @@ function renderOptionButtons(url, data) {
           qualityPreference: quality.value
         });
         statusText.textContent = `Added #${item.id} video ${quality.label}`;
-        await refreshQueue();
+        await refreshQueue(true);
       } catch (err) {
         statusText.textContent = err.message;
       }
@@ -84,7 +113,7 @@ function renderOptionButtons(url, data) {
         qualityPreference: "best"
       });
       statusText.textContent = `Added #${item.id} MP3`;
-      await refreshQueue();
+      await refreshQueue(true);
     } catch (err) {
       statusText.textContent = err.message;
     }
@@ -137,10 +166,15 @@ function createQueueItem(item) {
   const titleText = item.title || item.url;
   const thumb = item.thumbnailUrl || "https://placehold.co/640x360/101a33/c8d5ff?text=No+Thumbnail";
 
+  const canPreview = item.status === "completed" && Boolean(item.downloadUrl);
+  const isAudio = item.downloadType === "mp3";
+
   wrapper.innerHTML = `
     <div class="thumb-wrap">
       <img class="thumb" src="${thumb}" alt="${titleText}" loading="lazy" />
       <div class="thumb-overlay">${item.progress || 0}%</div>
+      ${canPreview ? `<button class="preview-btn">${isAudio ? "Play Audio" : "Play Video"}</button>` : ""}
+      <div class="preview-holder hidden"></div>
     </div>
     <div class="card-body">
       <div>
@@ -158,11 +192,15 @@ function createQueueItem(item) {
   `;
 
   const actions = wrapper.querySelector(".actions");
+  const previewBtn = wrapper.querySelector(".preview-btn");
+  const previewHolder = wrapper.querySelector(".preview-holder");
+  const thumbImg = wrapper.querySelector(".thumb");
+  const thumbOverlay = wrapper.querySelector(".thumb-overlay");
 
   if (item.status !== "downloading") {
     const removeBtn = document.createElement("button");
     removeBtn.className = "btn btn-remove";
-    removeBtn.textContent = "Remove";
+    removeBtn.innerHTML = "<span class=\"btn-icon\">🗑</span><span>Remove</span>";
     removeBtn.onclick = async () => {
       try {
         const { deleteFileToo } = askRemoveMode();
@@ -182,7 +220,7 @@ function createQueueItem(item) {
         statusText.textContent = deleteFileToo
           ? "Removed item and deleted associated file."
           : "Removed item from app.";
-        await refreshQueue();
+        await refreshQueue(true);
       } catch (err) {
         statusText.textContent = err.message;
       }
@@ -193,11 +231,11 @@ function createQueueItem(item) {
   if (item.status === "downloading") {
     const cancelBtn = document.createElement("button");
     cancelBtn.className = "btn btn-cancel";
-    cancelBtn.textContent = "Cancel";
+    cancelBtn.innerHTML = "<span class=\"btn-icon\">✖</span><span>Cancel</span>";
     cancelBtn.onclick = async () => {
       try {
         await queueAction(item.id, "cancel");
-        await refreshQueue();
+        await refreshQueue(true);
       } catch (err) {
         statusText.textContent = err.message;
       }
@@ -209,15 +247,56 @@ function createQueueItem(item) {
     const link = document.createElement("a");
     link.className = "btn btn-download";
     link.href = item.downloadUrl;
-    link.textContent = "Download File";
+    link.innerHTML = "<span class=\"btn-icon\">⬇</span><span>Download Only</span>";
     link.download = item.filename || "";
     actions.appendChild(link);
+  }
+
+  if (previewBtn && previewHolder) {
+    previewBtn.dataset.previewType = isAudio ? "audio" : "video";
+    previewBtn.onclick = () => {
+      const showingPreview = !previewHolder.classList.contains("hidden");
+      if (showingPreview) {
+        closePreviewCard(wrapper);
+        openPreviewItemId = null;
+        return;
+      }
+
+      if (isAudio) {
+        previewHolder.innerHTML = `
+          <div class="audio-preview">
+            <div class="audio-title">Audio Preview</div>
+            <audio controls preload="metadata" src="${item.downloadUrl}"></audio>
+          </div>
+        `;
+      } else {
+        previewHolder.innerHTML = `
+          <video controls preload="metadata" src="${item.downloadUrl}" poster="${thumb}"></video>
+        `;
+      }
+
+      previewHolder.classList.remove("hidden");
+      thumbImg.classList.add("hidden");
+      thumbOverlay.classList.add("hidden");
+      previewBtn.textContent = "Hide Preview";
+      openPreviewItemId = item.id;
+      closeAllOtherPreviews(wrapper);
+      const media = previewHolder.querySelector("video, audio");
+      if (media) {
+        media.addEventListener("play", () => closeAllOtherPreviews(wrapper));
+        media.play().catch(() => {});
+      }
+    };
   }
 
   return wrapper;
 }
 
-async function refreshQueue() {
+async function refreshQueue(force = false) {
+  if (!force && openPreviewItemId !== null) {
+    return;
+  }
+
   try {
     const items = await fetchQueue();
     queueList.innerHTML = "";
