@@ -1,55 +1,85 @@
 # YouTube Downloader Pro
 
-Web-based YouTube downloader with queue support, multiple quality selection, and persistent background processing.
+A browser-based YouTube downloader with quality selection, MP3 support, persistent queue, and modern grid UI with thumbnails.
 
-## Highlights
+## Features
 
-- Modern browser UI with quality buttons and queue dashboard
-- Download types: `Video` and `MP3`
-- Real quality list from source metadata (up to available `4K/2K/1080p/720p/...`)
-- Up to `5` concurrent downloads
-- Live progress percentage updates
-- Queue persisted in SQLite (`queue.db`)
-- Same video ID re-download overwrites the existing output file
-- Optional remove behavior: delete queue item only, or queue item + downloaded file
+- URL-based download flow with one-click quality option buttons
+- Real source quality listing (example: `2160p`, `1440p`, `1080p`, `720p`, `480p`, `360p`)
+- Download modes:
+  - `Video`
+  - `Audio MP3`
+- Queue with up to `5` concurrent downloads
+- Live progress updates in percentage
+- Grid card queue view with thumbnail, status, and progress bar
+- Downloaded items shown latest-first
+- SQLite-based persistence (`queue.db`)
+- Optional remove mode:
+  - remove from app only
+  - remove from app + delete associated file
+
+## Tech Stack
+
+- Node.js + Express
+- `yt-dlp-exec`
+- `ffmpeg-static`
+- SQLite (`sqlite3`)
+- Vanilla HTML/CSS/JS frontend
 
 ## Requirements
 
-- Node.js 18+ (recommended)
+- Node.js `18+` (recommended)
 - Internet connection
 
-## Quick Start
+## Setup
 
 ```bash
 npm install
 npm start
 ```
 
-Open:
+Open in browser:
 
 ```text
 http://localhost:3000
 ```
 
-## How It Works
+## Usage
 
 1. Paste a YouTube URL.
 2. Click `Load Options`.
-3. Choose a quality button (video) or `Audio MP3`.
-4. Item is added to queue and processed server-side.
+3. Click any option button:
+   - `Video <quality>`
+   - `Audio MP3 (Best)`
+4. Track progress in the queue grid cards.
+5. Use `Download File` after completion.
 
-## Queue Rules
+## File Naming Rules
 
-- Duplicate active jobs for same video ID are blocked.
-- Browser close hone par bhi downloads continue hote hain (server process running hona chahiye).
-- Remove button asks whether to also delete the associated file from disk.
+Video files are saved with selected quality suffix:
 
-## Output Files
+- `videoId_360.mp4`
+- `videoId_720.mp4`
+- `videoId_1080.mp4`
+- `videoId_1440.mp4`
+- `videoId_2160.mp4`
+- `videoId_best.mp4` (when auto/best selected)
 
-- Download folder: `downloads/`
-- Video filename: `<videoId>.<ext>` (usually `.mp4`)
-- MP3 filename: `<videoId>.mp3`
+MP3 files:
 
-## Disclaimer
+- `videoId.mp3`
 
-Use this tool responsibly and follow YouTube Terms of Service and applicable copyright laws.
+All files are saved in:
+
+- `downloads/`
+
+## Queue Behavior
+
+- Active duplicate job (same `videoId` + same `type` + same `quality`) is blocked.
+- Different qualities for same video can run as separate jobs.
+- Downloads continue server-side even if browser closes (server must keep running).
+
+## Notes
+
+- Old/failed 0-byte test files can be safely deleted from `downloads/`.
+- Use responsibly and follow YouTube terms and applicable copyright laws.
