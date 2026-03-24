@@ -61,6 +61,12 @@ function normalizeDownloadType(value) {
   return "video";
 }
 
+function getQualitySuffix(qualityPreference) {
+  if (!qualityPreference || qualityPreference === "best") return "best";
+  if (/^\d+$/.test(String(qualityPreference))) return String(qualityPreference);
+  return "best";
+}
+
 function getVideoIdFromUrl(url) {
   try {
     return ytdl.getURLVideoID(url);
@@ -139,6 +145,7 @@ function toItem(row) {
     url: row.url,
     videoId: row.videoId || "",
     title: row.title || "",
+    thumbnailUrl: row.thumbnailUrl || "",
     filename: row.filename || "",
     qualityPreference: row.qualityPreference || "best",
     downloadType: row.downloadType || "video",
@@ -157,6 +164,7 @@ async function loadQueue() {
       url TEXT NOT NULL,
       videoId TEXT DEFAULT '',
       title TEXT DEFAULT '',
+      thumbnailUrl TEXT DEFAULT '',
       filename TEXT DEFAULT '',
       qualityPreference TEXT DEFAULT 'best',
       downloadType TEXT DEFAULT 'video',
@@ -188,20 +196,26 @@ async function loadQueue() {
   } catch (_err) {
     // Column already exists in existing databases.
   }
+  try {
+    await runDb("ALTER TABLE queue_items ADD COLUMN thumbnailUrl TEXT DEFAULT ''");
+  } catch (_err) {
+    // Column already exists in existing databases.
+  }
 
   await runDb("UPDATE queue_items SET status = 'queued', message = 'Resuming after restart...' WHERE status IN ('downloading', 'merging')");
-  const rows = await allDb("SELECT * FROM queue_items ORDER BY id ASC");
+  const rows = await allDb("SELECT * FROM queue_items ORDER BY id DESC");
   queue = rows.map(toItem);
 }
 
 async function persistItem(item) {
   await runDb(
     `UPDATE queue_items
-     SET videoId = ?, title = ?, filename = ?, qualityPreference = ?, downloadType = ?, subtitleLanguage = ?, status = ?, progress = ?, message = ?, downloadUrl = ?
+     SET videoId = ?, title = ?, thumbnailUrl = ?, filename = ?, qualityPreference = ?, downloadType = ?, subtitleLanguage = ?, status = ?, progress = ?, message = ?, downloadUrl = ?
      WHERE id = ?`,
     [
       item.videoId || "",
       item.title,
+      item.thumbnailUrl || "",
       item.filename,
       item.qualityPreference || "best",
       item.downloadType || "video",
@@ -216,7 +230,7 @@ async function persistItem(item) {
 }
 
 async function refreshQueueFromDb() {
-  const rows = await allDb("SELECT * FROM queue_items ORDER BY id ASC");
+  const rows = await allDb("SELECT * FROM queue_items ORDER BY id DESC");
   queue = rows.map(toItem);
 }
 
@@ -286,7 +300,9 @@ async function downloadWithYtDlpFallback(item, task) {
   }
 
   const safeVideoId = sanitizeFileName(item.videoId || getVideoIdFromUrl(item.url) || "unknown_video_id");
-  const outputTemplate = path.join(downloadsDir, `${safeVideoId}.%(ext)s`);
+  const qualitySuffix = getQualitySuffix(item.qualityPreference);
+  const outputBase = `${safeVideoId}_${qualitySuffix}`;
+  const outputTemplate = path.join(downloadsDir, `${outputBase}.%(ext)s`);
   item.status = "downloading";
 
   await runYtDlpWithProgress(
@@ -308,7 +324,7 @@ async function downloadWithYtDlpFallback(item, task) {
     }
   );
 
-  const preferredCandidates = [`${safeVideoId}.mp4`, `${safeVideoId}.webm`, `${safeVideoId}.mkv`];
+  const preferredCandidates = [`${outputBase}.mp4`, `${outputBase}.webm`, `${outputBase}.mkv`];
   const existingPreferred = preferredCandidates.find((name) => {
     const candidatePath = path.join(downloadsDir, name);
     return fs.existsSync(candidatePath);
@@ -318,7 +334,7 @@ async function downloadWithYtDlpFallback(item, task) {
     fs
       .readdirSync(downloadsDir)
       .find((name) => {
-        if (!name.startsWith(`${safeVideoId}.`)) return false;
+        if (!name.startsWith(`${outputBase}.`)) return false;
         const ext = path.extname(name).toLowerCase();
         return [".mp4", ".webm", ".mkv"].includes(ext);
       }) || "";
@@ -338,7 +354,9 @@ async function downloadWithYtDlpFallback(item, task) {
 }
 
 async function downloadVideoWithYtDlp(item, task, safeVideoId, preferredHeight) {
-  const outputTemplate = path.join(downloadsDir, `${safeVideoId}.%(ext)s`);
+  const qualitySuffix = getQualitySuffix(item.qualityPreference);
+  const outputBase = `${safeVideoId}_${qualitySuffix}`;
+  const outputTemplate = path.join(downloadsDir, `${outputBase}.%(ext)s`);
   const formatSelector = preferredHeight
     ? `bestvideo[height<=${preferredHeight}]+bestaudio/best[height<=${preferredHeight}]/best`
     : "bestvideo+bestaudio/best";
@@ -361,7 +379,7 @@ async function downloadVideoWithYtDlp(item, task, safeVideoId, preferredHeight) 
     }
   );
 
-  const candidates = [`${safeVideoId}.mp4`, `${safeVideoId}.webm`, `${safeVideoId}.mkv`];
+  const candidates = [`${outputBase}.mp4`, `${outputBase}.webm`, `${outputBase}.mkv`];
   const fileName = candidates.find((name) => fs.existsSync(path.join(downloadsDir, name)));
   if (!fileName) {
     throw new Error("Video output file was not found.");
@@ -397,6 +415,8 @@ async function processQueueItem(item) {
 
     const safeVideoId = sanitizeFileName(item.videoId || "unknown_video_id");
     item.title = metadata?.title || item.title;
+    const thumbnails = Array.isArray(metadata?.thumbnails) ? metadata.thumbnails : [];
+    item.thumbnailUrl = thumbnails.length > 0 ? thumbnails[thumbnails.length - 1].url || "" : "";
     item.message = "Preparing download streams...";
     item.progress = 1;
     await persistItem(item);
@@ -482,12 +502,12 @@ app.post("/api/queue", async (req, res) => {
     const normalizedUrl = url.trim();
     const existingRows = normalizedVideoId
       ? await allDb(
-          "SELECT * FROM queue_items WHERE videoId = ? AND status IN ('queued','downloading','merging','paused') ORDER BY id DESC LIMIT 1",
-          [normalizedVideoId]
+          "SELECT * FROM queue_items WHERE videoId = ? AND downloadType = ? AND qualityPreference = ? AND status IN ('queued','downloading','merging','paused') ORDER BY id DESC LIMIT 1",
+          [normalizedVideoId, normalizedDownloadType, normalizedQuality]
         )
       : await allDb(
-          "SELECT * FROM queue_items WHERE url = ? AND status IN ('queued','downloading','merging','paused') ORDER BY id DESC LIMIT 1",
-          [normalizedUrl]
+          "SELECT * FROM queue_items WHERE url = ? AND downloadType = ? AND qualityPreference = ? AND status IN ('queued','downloading','merging','paused') ORDER BY id DESC LIMIT 1",
+          [normalizedUrl, normalizedDownloadType, normalizedQuality]
         );
     if (existingRows.length > 0 && isNonRemovableStatus(existingRows[0].status)) {
       return res.status(409).json({

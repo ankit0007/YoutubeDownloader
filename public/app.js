@@ -4,6 +4,7 @@ const statusText = document.getElementById("status-text");
 const queueList = document.getElementById("queue-list");
 const loadQualityBtn = document.getElementById("load-quality-btn");
 const optionButtons = document.getElementById("option-buttons");
+const defaultLoadButtonText = loadQualityBtn.textContent;
 
 async function fetchQueue() {
   const res = await fetch("/api/queue");
@@ -131,19 +132,24 @@ function askRemoveMode() {
 
 function createQueueItem(item) {
   const wrapper = document.createElement("article");
-  wrapper.className = "queue-item";
+  wrapper.className = `queue-item ${item.status === "completed" ? "is-complete" : "is-active"}`;
 
   const titleText = item.title || item.url;
+  const thumb = item.thumbnailUrl || "https://placehold.co/640x360/101a33/c8d5ff?text=No+Thumbnail";
 
   wrapper.innerHTML = `
-    <div class="queue-top">
+    <div class="thumb-wrap">
+      <img class="thumb" src="${thumb}" alt="${titleText}" loading="lazy" />
+      <div class="thumb-overlay">${item.progress || 0}%</div>
+    </div>
+    <div class="card-body">
       <div>
         <div class="title">${titleText}</div>
-        <div class="meta">#${item.id} - ${statusLabel(item.status)} - ${item.message}</div>
-        <div class="meta">Requested quality: ${item.qualityPreference === "best" ? "Auto (Best)" : `${item.qualityPreference}p`}</div>
+        <div class="meta">#${item.id} - ${statusLabel(item.status)}</div>
+        <div class="meta">${item.message}</div>
+        <div class="meta">Quality: ${item.qualityPreference === "best" ? "Auto (Best)" : `${item.qualityPreference}p`}</div>
         <div class="meta">Type: ${item.downloadType || "video"}</div>
       </div>
-      <div class="meta">${item.progress || 0}%</div>
     </div>
     <div class="progress-wrapper">
       <div class="progress-bar" style="width:${item.progress || 0}%"></div>
@@ -240,8 +246,12 @@ loadQualityBtn.addEventListener("click", async () => {
     return;
   }
 
-  statusText.textContent = "Loading available qualities...";
+  optionButtons.innerHTML = "";
+  optionButtons.innerHTML = "<span class=\"loading-chip\">Loading options...</span>";
+  statusText.textContent = "Fetching latest options for this URL...";
   loadQualityBtn.disabled = true;
+  loadQualityBtn.textContent = "Loading...";
+  loadQualityBtn.classList.add("is-loading");
   try {
     const data = await fetchQualities(url);
     renderOptionButtons(url, data);
@@ -253,6 +263,8 @@ loadQualityBtn.addEventListener("click", async () => {
     optionButtons.innerHTML = "";
   } finally {
     loadQualityBtn.disabled = false;
+    loadQualityBtn.textContent = defaultLoadButtonText;
+    loadQualityBtn.classList.remove("is-loading");
   }
 });
 
