@@ -1,0 +1,23 @@
+{
+  "name": "youtube-downloader-queue-app",
+  "version": "1.0.0",
+  "description": "Browser based YouTube downloader with queue support.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [
+    "youtube",
+    "downloader",
+    "queue",
+    "nodejs"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@distube/ytdl-core": "^4.16.12",
+    "express": "^4.21.2",
+    "ffmpeg-static": "^5.3.0",
+    "sqlite3": "^6.0.1"
+  }
+}

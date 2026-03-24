@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>YouTube Queue Downloader</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="container">
+      <h1>YouTube Downloader (Queue)</h1>
+      <p>Paste YouTube URL, queue multiple videos, and control active download.</p>
+
+      <form id="queue-form" class="queue-form">
+        <input
+          id="url-input"
+          type="url"
+          placeholder="https://www.youtube.com/watch?v=..."
+          required
+        />
+        <button type="submit">Add To Queue</button>
+      </form>
+
+      <p id="status-text" class="status-text"></p>
+
+      <section>
+        <h2>Download Queue</h2>
+        <div id="queue-list" class="queue-list"></div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
