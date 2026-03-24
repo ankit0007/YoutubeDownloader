@@ -95,11 +95,14 @@ function qualityLabel(height) {
   return `${height}p (SD)`;
 }
 
-function buildQualityOptions(info) {
+function buildQualityOptionsFromMetadata(metadata) {
+  const formats = Array.isArray(metadata?.formats) ? metadata.formats : [];
   const heights = new Set();
-  for (const f of info.formats) {
-    if (f.hasVideo && Number.isFinite(f.height) && f.height > 0) {
-      heights.add(Number(f.height));
+  for (const f of formats) {
+    const hasVideo = f?.vcodec && f.vcodec !== "none";
+    const height = Number(f?.height || 0);
+    if (hasVideo && Number.isFinite(height) && height > 0) {
+      heights.add(height);
     }
   }
 
@@ -143,6 +146,43 @@ async function getInfoWithFallback(url) {
   );
   error.cause = lastError;
   throw error;
+}
+
+async function getVideoMetadataWithYtDlp(url) {
+  return new Promise((resolve, reject) => {
+    const child = ytDlp.exec(url, {
+      dumpSingleJson: true,
+      noWarnings: true,
+      noPlaylist: true,
+      skipDownload: true
+    });
+
+    let stdoutData = "";
+    let stderrData = "";
+    if (child.stdout) {
+      child.stdout.on("data", (chunk) => {
+        stdoutData += String(chunk || "");
+      });
+    }
+    if (child.stderr) {
+      child.stderr.on("data", (chunk) => {
+        stderrData += String(chunk || "");
+      });
+    }
+
+    child.on("error", (err) => reject(err));
+    child.on("close", (code) => {
+      if (code !== 0) {
+        return reject(new Error(stderrData || `yt-dlp metadata exited with code ${code}`));
+      }
+      try {
+        const json = JSON.parse(stdoutData);
+        return resolve(json);
+      } catch (_err) {
+        return reject(new Error("Failed to parse yt-dlp metadata output."));
+      }
+    });
+  });
 }
 
 function toItem(row) {
@@ -303,7 +343,7 @@ async function downloadWithYtDlpFallback(item, task) {
   }
 
   const safeVideoId = sanitizeFileName(item.videoId || getVideoIdFromUrl(item.url) || "unknown_video_id");
-  const outputPath = path.join(downloadsDir, `${safeVideoId}.mp4`);
+  const outputTemplate = path.join(downloadsDir, `${safeVideoId}.%(ext)s`);
   item.status = "downloading";
 
   await runYtDlpWithProgress(
@@ -313,9 +353,9 @@ async function downloadWithYtDlpFallback(item, task) {
       noPlaylist: true,
       noWarnings: true,
       preferFreeFormats: true,
-      format: "bv*+ba/b",
-      mergeOutputFormat: "mp4",
-      output: outputPath,
+      // Use single playable stream to avoid broken merge edge-cases.
+      format: "best[ext=mp4]/best",
+      output: outputTemplate,
       ffmpegLocation: ffmpegPath
     },
     {
@@ -325,16 +365,70 @@ async function downloadWithYtDlpFallback(item, task) {
     }
   );
 
-  if (!fs.existsSync(outputPath)) {
+  const preferredCandidates = [`${safeVideoId}.mp4`, `${safeVideoId}.webm`, `${safeVideoId}.mkv`];
+  const existingPreferred = preferredCandidates.find((name) => {
+    const candidatePath = path.join(downloadsDir, name);
+    return fs.existsSync(candidatePath);
+  });
+
+  const fallbackCandidate =
+    fs
+      .readdirSync(downloadsDir)
+      .find((name) => {
+        if (!name.startsWith(`${safeVideoId}.`)) return false;
+        const ext = path.extname(name).toLowerCase();
+        return [".mp4", ".webm", ".mkv"].includes(ext);
+      }) || "";
+
+  const finalFileName = existingPreferred || fallbackCandidate;
+  if (!finalFileName) {
     throw new Error("Fallback download finished but output file was not found.");
   }
 
-  item.filename = path.basename(outputPath);
-  item.title = item.title || item.filename.replace(".mp4", "");
+  item.filename = finalFileName;
+  item.title = item.title || item.filename.replace(path.extname(item.filename), "");
   item.downloadUrl = `/downloads/${encodeURIComponent(item.filename)}`;
   item.progress = 100;
   item.status = "completed";
   item.message = "Download completed (yt-dlp fallback)";
+  await persistItem(item);
+}
+
+async function downloadVideoWithYtDlp(item, task, safeVideoId, preferredHeight) {
+  const outputTemplate = path.join(downloadsDir, `${safeVideoId}.%(ext)s`);
+  const formatSelector = preferredHeight
+    ? `bestvideo[height<=${preferredHeight}]+bestaudio/best[height<=${preferredHeight}]/best`
+    : "bestvideo+bestaudio/best";
+
+  await runYtDlpWithProgress(
+    item,
+    task,
+    {
+      noPlaylist: true,
+      noWarnings: true,
+      format: formatSelector,
+      mergeOutputFormat: "mp4",
+      output: outputTemplate,
+      ffmpegLocation: ffmpegPath
+    },
+    {
+      message: "Downloading video...",
+      rangeStart: 5,
+      rangeEnd: 98
+    }
+  );
+
+  const candidates = [`${safeVideoId}.mp4`, `${safeVideoId}.webm`, `${safeVideoId}.mkv`];
+  const fileName = candidates.find((name) => fs.existsSync(path.join(downloadsDir, name)));
+  if (!fileName) {
+    throw new Error("Video output file was not found.");
+  }
+
+  item.filename = fileName;
+  item.progress = 100;
+  item.status = "completed";
+  item.message = "Video download completed";
+  item.downloadUrl = `/downloads/${encodeURIComponent(item.filename)}`;
   await persistItem(item);
 }
 
@@ -418,22 +512,16 @@ async function processQueueItem(item) {
     item.progress = 0;
     await persistItem(item);
 
-    const info = await getInfoWithFallback(item.url);
+    const metadata = await getVideoMetadataWithYtDlp(item.url);
     const preferredHeight = parseQualityPreference(item.qualityPreference);
     const downloadType = normalizeDownloadType(item.downloadType);
-    item.videoId = info.videoDetails?.videoId || item.videoId || getVideoIdFromUrl(item.url) || "";
-    const videoOnly = info.formats.filter((f) => f.hasVideo && !f.hasAudio);
-    const audioOnly = info.formats.filter((f) => f.hasAudio && !f.hasVideo);
-    const progressiveMp4 = info.formats.filter((f) => f.hasVideo && f.hasAudio && f.container === "mp4");
-
-    const videoFormat = chooseVideoByPreference(videoOnly, preferredHeight);
-    const audioFormat = tryChooseFormat(audioOnly, "highestaudio");
+    item.videoId = metadata?.id || item.videoId || getVideoIdFromUrl(item.url) || "";
 
     const safeVideoId = sanitizeFileName(item.videoId || "unknown_video_id");
     const outputFilename = `${safeVideoId}.mp4`;
     const outputPath = path.join(downloadsDir, outputFilename);
 
-    item.title = info.videoDetails.title;
+    item.title = metadata?.title || item.title;
     item.message = "Preparing download streams...";
     item.progress = 1;
     await persistItem(item);
@@ -469,81 +557,7 @@ async function processQueueItem(item) {
       return;
     }
 
-    item.filename = outputFilename;
-    if (videoFormat && audioFormat) {
-      videoTempPath = path.join(tempDir, `${safeVideoId}.video.tmp.mp4`);
-      audioTempPath = path.join(tempDir, `${safeVideoId}.audio.tmp.webm`);
-
-      item.message = "Downloading best video stream...";
-      await persistItem(item);
-
-      let videoPart = 0;
-      let audioPart = 0;
-      const updateCombinedProgress = async () => {
-        item.progress = Math.min(89, Math.round(videoPart * 45 + audioPart * 45));
-        await persistItem(item);
-      };
-
-      await downloadStreamToFile({
-        info,
-        format: videoFormat,
-        outputPath: videoTempPath,
-        onProgress: async (downloaded, total) => {
-          videoPart = downloaded / total;
-          await updateCombinedProgress();
-        },
-        registerStream: (stream) => {
-          task.videoStream = stream;
-        }
-      });
-
-      if (task.canceled) throw new Error("Download cancelled");
-
-      item.message = "Downloading best audio stream...";
-      await persistItem(item);
-
-      await downloadStreamToFile({
-        info,
-        format: audioFormat,
-        outputPath: audioTempPath,
-        onProgress: async (downloaded, total) => {
-          audioPart = downloaded / total;
-          await updateCombinedProgress();
-        },
-        registerStream: (stream) => {
-          task.audioStream = stream;
-        }
-      });
-
-      if (task.canceled) throw new Error("Download cancelled");
-      await mergeWithFfmpeg(videoTempPath, audioTempPath, outputPath, item, task);
-    } else {
-      const fallbackFormat = chooseVideoByPreference(progressiveMp4, preferredHeight);
-      if (!fallbackFormat) {
-        throw new Error("No downloadable format found for this video.");
-      }
-
-      item.message = "Downloading progressive fallback stream...";
-      item.progress = 5;
-      await persistItem(item);
-
-      await downloadStreamToFile({
-        info,
-        format: fallbackFormat,
-        outputPath,
-        onProgress: async (downloaded, total) => {
-          item.progress = Math.round((downloaded / total) * 100);
-          await persistItem(item);
-        },
-        registerStream: (stream) => {
-          task.videoStream = stream;
-        }
-      });
-    }
-    item.status = "completed";
-    item.message = "Download completed";
-    item.downloadUrl = `/downloads/${encodeURIComponent(outputFilename)}`;
-    await persistItem(item);
+    await downloadVideoWithYtDlp(item, task, safeVideoId, preferredHeight);
   } catch (err) {
     if (item.status !== "paused") {
       if (shouldUseYtDlpFallback(err) && !task.canceled) {
@@ -629,10 +643,10 @@ app.post("/api/formats", async (req, res) => {
       return res.status(400).json({ error: "Please provide a valid YouTube URL." });
     }
 
-    const info = await getInfoWithFallback(url.trim());
+    const metadata = await getVideoMetadataWithYtDlp(url.trim());
     return res.json({
-      title: info.videoDetails?.title || "",
-      qualities: buildQualityOptions(info)
+      title: metadata?.title || "",
+      qualities: buildQualityOptionsFromMetadata(metadata)
     });
   } catch (err) {
     return res.status(500).json({ error: err.message || "Could not fetch quality options." });

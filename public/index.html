@@ -8,23 +8,24 @@
   </head>
   <body>
     <main class="container">
-      <h1>YouTube Downloader (Queue)</h1>
-      <p>Paste YouTube URL, queue multiple videos, and control active download.</p>
+      <section class="hero-card">
+        <h1>YouTube Downloader Pro</h1>
+        <p>Load a YouTube link, pick exact quality, and queue downloads with live progress.</p>
 
-      <form id="queue-form" class="queue-form">
-        <input
-          id="url-input"
-          type="url"
-          placeholder="https://www.youtube.com/watch?v=..."
-          required
-        />
-        <button id="load-quality-btn" type="button" class="secondary-btn">Load Qualities</button>
-      </form>
-      <div id="option-buttons" class="option-buttons"></div>
+        <form id="queue-form" class="queue-form">
+          <input
+            id="url-input"
+            type="url"
+            placeholder="Paste YouTube URL: https://www.youtube.com/watch?v=..."
+            required
+          />
+          <button id="load-quality-btn" type="button" class="secondary-btn">Load Options</button>
+        </form>
+        <div id="option-buttons" class="option-buttons"></div>
+        <p id="status-text" class="status-text"></p>
+      </section>
 
-      <p id="status-text" class="status-text"></p>
-
-      <section>
+      <section class="queue-section">
         <h2>Download Queue</h2>
         <div id="queue-list" class="queue-list"></div>
       </section>
