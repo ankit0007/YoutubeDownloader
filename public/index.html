@@ -10,7 +10,7 @@
     <main class="container">
       <section class="hero-card">
         <h1>YouTube Downloader Pro</h1>
-        <p>Queue YouTube videos with quality control, bulk URLs, or search and pick what to download.</p>
+        <p>Queue YouTube videos with quality control or paste multiple URLs at once.</p>
 
         <div class="tabs-nav" role="tablist" aria-label="Add to queue">
           <button
@@ -34,17 +34,6 @@
             data-tab="bulk"
           >
             Multiple URLs
-          </button>
-          <button
-            type="button"
-            class="tab-btn"
-            role="tab"
-            id="tab-btn-search"
-            aria-selected="false"
-            aria-controls="panel-search"
-            data-tab="search"
-          >
-            YouTube search
           </button>
         </div>
 
@@ -88,64 +77,6 @@
               Queue all · MP3
             </button>
           </div>
-        </div>
-
-        <div id="panel-search" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-search" hidden>
-          <p class="tab-hint">Search YouTube, tick videos, then queue them as video (best), MP3, or a chosen quality.</p>
-          <div class="search-row">
-            <input
-              id="search-query-input"
-              type="search"
-              class="search-query-input"
-              placeholder="Search YouTube..."
-              autocomplete="off"
-            />
-            <button type="button" id="search-run-btn" class="secondary-btn">Search</button>
-          </div>
-          <div class="search-filters" role="group" aria-label="Search filters">
-            <label class="search-filter">
-              <span>Duration</span>
-              <select id="search-filter-duration">
-                <option value="">Any</option>
-                <option value="short">Short</option>
-                <option value="medium">Medium</option>
-                <option value="long">Long</option>
-              </select>
-            </label>
-            <label class="search-filter">
-              <span>Upload</span>
-              <select id="search-filter-upload">
-                <option value="">Any</option>
-                <option value="hour">Last hour</option>
-                <option value="today">Today</option>
-                <option value="week">This week</option>
-                <option value="month">This month</option>
-                <option value="year">This year</option>
-              </select>
-            </label>
-            <label class="search-filter">
-              <span>Sort</span>
-              <select id="search-filter-sort">
-                <option value="relevance">Relevance</option>
-                <option value="upload_date">Upload date</option>
-                <option value="view_count">View count</option>
-                <option value="rating">Rating</option>
-              </select>
-            </label>
-          </div>
-          <div class="search-toolbar">
-            <label class="search-select-all-label">
-              <input type="checkbox" id="search-select-all-results" />
-              <span>Select all results</span>
-            </label>
-          </div>
-          <div id="search-results" class="search-results"></div>
-          <div class="search-queue-actions">
-            <button type="button" id="search-queue-video-best" class="secondary-btn">Queue selected · Video (best)</button>
-            <button type="button" id="search-queue-mp3" class="secondary-btn bulk-mp3-btn">Queue selected · MP3</button>
-            <button type="button" id="search-load-quality-btn" class="secondary-btn">Load qualities (first selected)</button>
-          </div>
-          <div id="search-quality-options" class="option-buttons search-quality-options hidden" aria-live="polite"></div>
         </div>
 
         <p id="status-text" class="status-text"></p>

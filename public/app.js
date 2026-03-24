@@ -12,14 +12,6 @@ const bulkUrlsInput = document.getElementById("bulk-urls-input");
 const bulkLoadQualityBtn = document.getElementById("bulk-load-quality-btn");
 const bulkQueueVideoBtn = document.getElementById("bulk-queue-video-btn");
 const bulkQueueMp3Btn = document.getElementById("bulk-queue-mp3-btn");
-const searchQueryInput = document.getElementById("search-query-input");
-const searchRunBtn = document.getElementById("search-run-btn");
-const searchResultsEl = document.getElementById("search-results");
-const searchSelectAllResults = document.getElementById("search-select-all-results");
-const searchQueueVideoBest = document.getElementById("search-queue-video-best");
-const searchQueueMp3 = document.getElementById("search-queue-mp3");
-const searchLoadQualityBtn = document.getElementById("search-load-quality-btn");
-const searchQualityOptions = document.getElementById("search-quality-options");
 const selectAllCheckbox = document.getElementById("select-all-queue");
 const selectionCountEl = document.getElementById("selection-count");
 const bulkDownloadBtn = document.getElementById("bulk-download-btn");
@@ -41,8 +33,7 @@ function initTabs() {
   const tabBtns = document.querySelectorAll(".tab-btn");
   const panels = {
     single: document.getElementById("panel-single"),
-    bulk: document.getElementById("panel-bulk"),
-    search: document.getElementById("panel-search")
+    bulk: document.getElementById("panel-bulk")
   };
   tabBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -221,45 +212,6 @@ function renderBulkQualityOptions(data) {
   bulkTabMatchOptions.appendChild(mp3Bulk);
 }
 
-function renderSearchQualityOptions(data) {
-  if (!searchQualityOptions) return;
-  searchQualityOptions.innerHTML = "";
-  searchQualityOptions.classList.remove("hidden");
-  const videoOptions = Array.isArray(data.qualities) ? data.qualities : [];
-  const hint = document.createElement("span");
-  hint.className = "bulk-quality-hint";
-  hint.textContent = "Queue selected videos at:";
-  searchQualityOptions.appendChild(hint);
-
-  for (const quality of videoOptions) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "option-btn";
-    btn.textContent = `Video ${quality.label}`;
-    btn.onclick = async () => {
-      try {
-        await queueUrlsBulk(getSelectedSearchUrls(), quality.value, "video");
-      } catch (err) {
-        statusText.textContent = err.message;
-      }
-    };
-    searchQualityOptions.appendChild(btn);
-  }
-
-  const mp3Btn = document.createElement("button");
-  mp3Btn.type = "button";
-  mp3Btn.className = "option-btn mp3";
-  mp3Btn.textContent = "Audio MP3 (Best)";
-  mp3Btn.onclick = async () => {
-    try {
-      await queueUrlsBulk(getSelectedSearchUrls(), "best", "mp3");
-    } catch (err) {
-      statusText.textContent = err.message;
-    }
-  };
-  searchQualityOptions.appendChild(mp3Btn);
-}
-
 function statusLabel(status) {
   switch (status) {
     case "queued":
@@ -343,116 +295,6 @@ async function runBulkQueue(qualityPreference, downloadType) {
     return;
   }
   await queueUrlsBulk(lines, qualityPreference, downloadType);
-}
-
-async function fetchYouTubeSearch(q) {
-  const durationEl = document.getElementById("search-filter-duration");
-  const uploadEl = document.getElementById("search-filter-upload");
-  const sortEl = document.getElementById("search-filter-sort");
-  const payload = { q, limit: 20 };
-  if (durationEl && durationEl.value) {
-    payload.duration = durationEl.value;
-  }
-  if (uploadEl && uploadEl.value) {
-    payload.upload_date = uploadEl.value;
-  }
-  if (sortEl && sortEl.value) {
-    payload.sort_by = sortEl.value;
-  }
-  const res = await fetch("/api/search", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  const raw = await res.text();
-  let data = {};
-  try {
-    data = raw ? JSON.parse(raw) : {};
-  } catch (_err) {
-    const looksHtml = raw.trimStart().toLowerCase().startsWith("<!doctype") || raw.trimStart().startsWith("<html");
-    throw new Error(
-      looksHtml
-        ? "Got HTML instead of JSON — you are not hitting this app’s Node server. Open the UI at http://localhost:3000 (same port as npm start), not Live Server / another host."
-        : "Invalid response from server. Restart the app and try again."
-    );
-  }
-  if (!res.ok) {
-    throw new Error(data.error || "Search failed");
-  }
-  return Array.isArray(data.results) ? data.results : [];
-}
-
-function formatDuration(sec) {
-  if (sec == null || !Number.isFinite(sec)) return "";
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
-
-function getSelectedSearchUrls() {
-  const out = [];
-  document.querySelectorAll(".search-result-cb:checked").forEach((cb) => {
-    const u = cb.dataset.url;
-    if (u) {
-      out.push(u);
-    }
-  });
-  return out;
-}
-
-function renderSearchResults(results) {
-  if (!searchResultsEl) return;
-  if (searchQualityOptions) {
-    searchQualityOptions.innerHTML = "";
-    searchQualityOptions.classList.add("hidden");
-  }
-  if (searchSelectAllResults) {
-    searchSelectAllResults.checked = false;
-    searchSelectAllResults.indeterminate = false;
-  }
-  searchResultsEl.innerHTML = "";
-  if (!results.length) {
-    const p = document.createElement("p");
-    p.className = "tab-hint";
-    p.textContent = "No results. Try different words.";
-    searchResultsEl.appendChild(p);
-    return;
-  }
-  for (const r of results) {
-    const card = document.createElement("article");
-    card.className = "search-result-card";
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.className = "search-result-cb";
-    cb.dataset.url = r.url;
-    const img = document.createElement("img");
-    img.className = "search-result-thumb";
-    img.src = r.thumbnailUrl || "";
-    img.alt = "";
-    img.loading = "lazy";
-    const body = document.createElement("div");
-    body.className = "search-result-body";
-    const titleEl = document.createElement("p");
-    titleEl.className = "search-result-title";
-    titleEl.textContent = r.title || "Video";
-    const meta = document.createElement("p");
-    meta.className = "search-result-meta";
-    const parts = [];
-    if (r.channel) {
-      parts.push(r.channel);
-    }
-    const dur = formatDuration(r.durationSec);
-    if (dur) {
-      parts.push(dur);
-    }
-    meta.textContent = parts.join(" · ");
-    body.appendChild(titleEl);
-    body.appendChild(meta);
-    card.appendChild(cb);
-    card.appendChild(img);
-    card.appendChild(body);
-    searchResultsEl.appendChild(card);
-  }
 }
 
 function syncSelectAllState() {
@@ -843,112 +685,6 @@ if (bulkDeleteBtn) {
       await refreshQueue(true);
     } catch (err) {
       statusText.textContent = err.message;
-    }
-  });
-}
-
-if (searchQueryInput && searchRunBtn) {
-  searchQueryInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      searchRunBtn.click();
-    }
-  });
-}
-
-if (searchRunBtn && searchQueryInput) {
-  searchRunBtn.addEventListener("click", async () => {
-    const q = searchQueryInput.value.trim();
-    if (!q) {
-      statusText.textContent = "Enter a search query.";
-      return;
-    }
-    searchRunBtn.disabled = true;
-    searchRunBtn.textContent = "Searching...";
-    statusText.textContent = "Searching YouTube...";
-    try {
-      const results = await fetchYouTubeSearch(q);
-      renderSearchResults(results);
-      statusText.textContent = results.length
-        ? `Found ${results.length} result(s). Select and queue.`
-        : "No results.";
-    } catch (err) {
-      statusText.textContent = err.message;
-      if (searchResultsEl) {
-        searchResultsEl.innerHTML = "";
-      }
-    } finally {
-      searchRunBtn.disabled = false;
-      searchRunBtn.textContent = "Search";
-    }
-  });
-}
-
-if (searchSelectAllResults) {
-  searchSelectAllResults.addEventListener("change", () => {
-    document.querySelectorAll(".search-result-cb").forEach((cb) => {
-      cb.checked = searchSelectAllResults.checked;
-    });
-  });
-}
-
-if (searchResultsEl) {
-  searchResultsEl.addEventListener("change", (e) => {
-    const t = e.target;
-    if (!t || !t.classList || !t.classList.contains("search-result-cb")) return;
-    const all = [...document.querySelectorAll(".search-result-cb")];
-    const n = all.filter((c) => c.checked).length;
-    if (searchSelectAllResults) {
-      searchSelectAllResults.checked = all.length > 0 && n === all.length;
-      searchSelectAllResults.indeterminate = n > 0 && n < all.length;
-    }
-  });
-}
-
-if (searchQueueVideoBest) {
-  searchQueueVideoBest.addEventListener("click", async () => {
-    try {
-      await queueUrlsBulk(getSelectedSearchUrls(), "best", "video");
-    } catch (err) {
-      statusText.textContent = err.message;
-    }
-  });
-}
-
-if (searchQueueMp3) {
-  searchQueueMp3.addEventListener("click", async () => {
-    try {
-      await queueUrlsBulk(getSelectedSearchUrls(), "best", "mp3");
-    } catch (err) {
-      statusText.textContent = err.message;
-    }
-  });
-}
-
-if (searchLoadQualityBtn) {
-  searchLoadQualityBtn.addEventListener("click", async () => {
-    const urls = getSelectedSearchUrls();
-    if (urls.length === 0) {
-      statusText.textContent = "Select at least one video.";
-      return;
-    }
-    searchLoadQualityBtn.disabled = true;
-    searchLoadQualityBtn.textContent = "Loading...";
-    try {
-      const data = await fetchQualities(urls[0]);
-      renderSearchQualityOptions(data);
-      statusText.textContent = data.title
-        ? `Qualities for: ${data.title} (applies to all selected when you click a chip).`
-        : "Quality options loaded.";
-    } catch (err) {
-      statusText.textContent = err.message;
-      if (searchQualityOptions) {
-        searchQualityOptions.innerHTML = "";
-        searchQualityOptions.classList.add("hidden");
-      }
-    } finally {
-      searchLoadQualityBtn.disabled = false;
-      searchLoadQualityBtn.textContent = "Load qualities (first selected)";
     }
   });
 }
