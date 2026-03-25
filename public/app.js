@@ -89,6 +89,10 @@ function setAppVisible(isVisible) {
   if (appShell) appShell.classList.toggle("hidden", !isVisible);
 }
 
+function setSessionControls(isLoggedIn) {
+  if (logoutBtn) logoutBtn.classList.toggle("hidden", !isLoggedIn);
+}
+
 function stopQueueRefresh() {
   if (queueRefreshTimer !== null) {
     window.clearInterval(queueRefreshTimer);
@@ -909,6 +913,7 @@ async function logout() {
   await fetch("/api/auth/logout", { method: "POST" });
   stopQueueRefresh();
   setAppVisible(true);
+  setSessionControls(false);
   setRegisterVisible(false);
   if (analyticsSection) analyticsSection.classList.add("hidden");
   if (optionButtons) optionButtons.innerHTML = "";
@@ -925,6 +930,7 @@ async function logout() {
 
 async function startAuthenticatedApp(username, isAdmin) {
   setAppVisible(true);
+  setSessionControls(true);
   if (welcomeUser) {
     welcomeUser.textContent = username ? `Logged in as: ${username}` : "Logged in";
   }
@@ -943,6 +949,7 @@ async function bootstrapAuth() {
     return;
   }
   setAppVisible(true);
+  setSessionControls(false);
   if (welcomeUser) welcomeUser.textContent = "Guest mode";
   if (analyticsSection) analyticsSection.classList.add("hidden");
   stopQueueRefresh();
@@ -985,6 +992,7 @@ if (logoutBtn) {
     logout().catch(() => {
       stopQueueRefresh();
       setAppVisible(true);
+      setSessionControls(false);
       setRegisterVisible(false);
       if (analyticsSection) analyticsSection.classList.add("hidden");
       setAuthStatus("Logout failed. Try again.");
@@ -1003,6 +1011,7 @@ if (refreshAnalyticsBtn) {
 bootstrapAuth().catch(() => {
   stopQueueRefresh();
   setAppVisible(true);
+  setSessionControls(false);
   if (analyticsSection) analyticsSection.classList.add("hidden");
   setMainStatus("App loaded in guest mode.");
 });
