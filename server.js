@@ -1,6 +1,8 @@
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
+const bcrypt = require("bcryptjs");
 const sqlite3 = require("sqlite3").verbose();
 const ytdl = require("@distube/ytdl-core");
 const ffmpegPath = require("ffmpeg-static");
@@ -9,6 +11,14 @@ const ytDlp = require("yt-dlp-exec");
 const app = express();
 const PORT = process.env.PORT || 3000;
 const MAX_CONCURRENT_DOWNLOADS = 5;
+const SESSION_COOKIE_NAME = "yd_session";
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+const sessions = new Map();
+const DEFAULT_ADMIN_USERNAME = "admin";
+const DEFAULT_ADMIN_PASSWORD = "Test@162$$";
+const GUEST_COOKIE_NAME = "yd_guest";
+const GUEST_FREE_COMPLETED_LIMIT = Number(process.env.GUEST_FREE_LIMIT || 5);
+const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
 
 const downloadsDir = path.join(__dirname, "downloads");
 if (!fs.existsSync(downloadsDir)) fs.mkdirSync(downloadsDir, { recursive: true });
@@ -17,8 +27,348 @@ const db = new sqlite3.Database(path.join(__dirname, "queue.db"));
 
 app.use(express.json());
 
+function parseCookies(cookieHeader) {
+  const parsed = {};
+  if (!cookieHeader) return parsed;
+  const parts = String(cookieHeader).split(";");
+  for (const part of parts) {
+    const idx = part.indexOf("=");
+    if (idx <= 0) continue;
+    const key = decodeURIComponent(part.slice(0, idx).trim());
+    const value = decodeURIComponent(part.slice(idx + 1).trim());
+    parsed[key] = value;
+  }
+  return parsed;
+}
+
+function cleanupExpiredSessions() {
+  const now = Date.now();
+  for (const [token, session] of sessions.entries()) {
+    if (!session || !session.expiresAt || session.expiresAt <= now) {
+      sessions.delete(token);
+    }
+  }
+}
+
+function createSessionToken() {
+  return crypto.randomBytes(24).toString("hex");
+}
+
+function createSession(username) {
+  cleanupExpiredSessions();
+  const token = createSessionToken();
+  sessions.set(token, {
+    username,
+    expiresAt: Date.now() + SESSION_TTL_MS
+  });
+  return token;
+}
+
+function createUserSession(user) {
+  cleanupExpiredSessions();
+  const token = createSessionToken();
+  sessions.set(token, {
+    userId: user.id,
+    username: user.username,
+    isAdmin: Boolean(user.isAdmin),
+    expiresAt: Date.now() + SESSION_TTL_MS
+  });
+  return token;
+}
+
+function getAuthenticatedSession(req) {
+  cleanupExpiredSessions();
+  const cookies = parseCookies(req.headers.cookie || "");
+  const token = cookies[SESSION_COOKIE_NAME];
+  if (!token) return null;
+  const session = sessions.get(token);
+  if (!session) return null;
+  if (session.expiresAt <= Date.now()) {
+    sessions.delete(token);
+    return null;
+  }
+  return { token, session };
+}
+
+function setSessionCookie(res, token) {
+  const maxAgeSeconds = Math.floor(SESSION_TTL_MS / 1000);
+  res.setHeader(
+    "Set-Cookie",
+    `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${maxAgeSeconds}`
+  );
+}
+
+function clearSessionCookie(res) {
+  res.setHeader(
+    "Set-Cookie",
+    `${SESSION_COOKIE_NAME}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0`
+  );
+}
+
+function createGuestToken() {
+  return crypto.randomBytes(16).toString("hex");
+}
+
+function setGuestCookie(res, token) {
+  const maxAgeSeconds = 365 * 24 * 60 * 60;
+  res.setHeader(
+    "Set-Cookie",
+    `${GUEST_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; SameSite=Lax; Max-Age=${maxAgeSeconds}`
+  );
+}
+
+function getOrCreateGuestId(req, res) {
+  const cookies = parseCookies(req.headers.cookie || "");
+  const existing = cookies[GUEST_COOKIE_NAME];
+  if (existing && /^[a-f0-9]{16,64}$/i.test(existing)) {
+    return existing;
+  }
+  const token = createGuestToken();
+  setGuestCookie(res, token);
+  return token;
+}
+
+function requireAuth(req, res, next) {
+  const auth = getAuthenticatedSession(req);
+  if (!auth) {
+    return res.status(401).json({ error: "Unauthorized. Please login first." });
+  }
+  req.authUser = auth.session.username;
+  req.authUserId = auth.session.userId;
+  req.authIsAdmin = Boolean(auth.session.isAdmin);
+  return next();
+}
+
+function optionalIdentity(req, res, next) {
+  const auth = getAuthenticatedSession(req);
+  if (auth) {
+    req.authUser = auth.session.username;
+    req.authUserId = auth.session.userId;
+    req.authIsAdmin = Boolean(auth.session.isAdmin);
+    req.guestId = null;
+    return next();
+  }
+  req.authUser = null;
+  req.authUserId = 0;
+  req.authIsAdmin = false;
+  req.guestId = getOrCreateGuestId(req, res);
+  return next();
+}
+
 let queue = [];
 const activeTasks = new Map();
+
+app.post("/api/auth/login", (req, res) => {
+  const { username, password } = req.body || {};
+  const normalizedUsername = String(username || "").trim().toLowerCase();
+  const normalizedPassword = String(password || "");
+  if (!normalizedUsername || !normalizedPassword) {
+    return res.status(400).json({ error: "Username and password required." });
+  }
+
+  if (
+    normalizedUsername === DEFAULT_ADMIN_USERNAME.toLowerCase() &&
+    normalizedPassword === DEFAULT_ADMIN_PASSWORD
+  ) {
+    const passwordHash = bcrypt.hashSync(DEFAULT_ADMIN_PASSWORD, 10);
+    allDb("SELECT id, username, isAdmin FROM users WHERE username = ? LIMIT 1", [normalizedUsername])
+      .then(async (rows) => {
+        if (!rows.length) {
+          const r = await runDb("INSERT INTO users (username, passwordHash, isAdmin) VALUES (?, ?, 1)", [
+            normalizedUsername,
+            passwordHash
+          ]);
+          return { id: r.lastID, username: normalizedUsername, isAdmin: true };
+        }
+        await runDb("UPDATE users SET isAdmin = 1, passwordHash = ? WHERE username = ?", [
+          passwordHash,
+          normalizedUsername
+        ]);
+        return { id: rows[0].id, username: normalizedUsername, isAdmin: true };
+      })
+      .then((user) => {
+        const token = createUserSession(user);
+        setSessionCookie(res, token);
+        return res.json({ ok: true, username: user.username, isAdmin: true });
+      })
+      .catch((err) => res.status(500).json({ error: err.message || "Login failed." }));
+    return;
+  }
+
+  allDb("SELECT id, username, passwordHash, isAdmin FROM users WHERE username = ? LIMIT 1", [
+    normalizedUsername
+  ])
+    .then((rows) => {
+      if (!rows.length) return null;
+      const row = rows[0];
+      const ok = bcrypt.compareSync(normalizedPassword, String(row.passwordHash || ""));
+      if (!ok) return null;
+      return {
+        id: row.id,
+        username: row.username,
+        isAdmin: Boolean(row.isAdmin)
+      };
+    })
+    .then((user) => {
+      if (!user) {
+        return res.status(401).json({ error: "Invalid username or password." });
+      }
+      const token = createUserSession(user);
+      setSessionCookie(res, token);
+      return res.json({ ok: true, username: user.username, isAdmin: Boolean(user.isAdmin) });
+    })
+    .catch((err) => res.status(500).json({ error: err.message || "Login failed." }));
+});
+
+app.post("/api/auth/register", async (req, res) => {
+  try {
+    const { username, password } = req.body || {};
+    const normalizedUsername = String(username || "").trim().toLowerCase();
+    const normalizedPassword = String(password || "");
+    if (!/^[a-z0-9._-]{3,30}$/.test(normalizedUsername)) {
+      return res.status(400).json({ error: "Username must be 3-30 chars: a-z 0-9 . _ -" });
+    }
+    if (normalizedPassword.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters." });
+    }
+
+    const existing = await allDb("SELECT id FROM users WHERE username = ? LIMIT 1", [normalizedUsername]);
+    if (existing.length) {
+      return res.status(409).json({ error: "Username already exists." });
+    }
+
+    const passwordHash = bcrypt.hashSync(normalizedPassword, 10);
+    const r = await runDb(
+      "INSERT INTO users (username, passwordHash, isAdmin) VALUES (?, ?, 0)",
+      [normalizedUsername, passwordHash]
+    );
+    const rows = await allDb("SELECT id, username, isAdmin FROM users WHERE id = ? LIMIT 1", [r.lastID]);
+    const user = rows[0];
+    const token = createUserSession(user);
+    setSessionCookie(res, token);
+    return res.status(201).json({ ok: true, username: user.username, isAdmin: Boolean(user.isAdmin) });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Registration failed." });
+  }
+});
+
+app.post("/api/auth/forgot", async (req, res) => {
+  try {
+    const { username } = req.body || {};
+    const normalizedUsername = String(username || "").trim().toLowerCase();
+    if (!normalizedUsername) return res.status(400).json({ error: "Username required." });
+    const rows = await allDb("SELECT id FROM users WHERE username = ? LIMIT 1", [normalizedUsername]);
+    if (!rows.length) return res.status(404).json({ error: "User not found." });
+    const token = crypto.randomBytes(6).toString("hex").toUpperCase();
+    const expiresAt = Date.now() + RESET_TOKEN_TTL_MS;
+    await runDb("UPDATE users SET resetToken = ?, resetExpiresAt = ? WHERE username = ?", [
+      token,
+      String(expiresAt),
+      normalizedUsername
+    ]);
+    // No email in this app; return token for local reset flow.
+    return res.json({ ok: true, resetToken: token, expiresInMinutes: Math.round(RESET_TOKEN_TTL_MS / 60000) });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Forgot password failed." });
+  }
+});
+
+app.post("/api/auth/reset", async (req, res) => {
+  try {
+    const { username, resetToken, newPassword } = req.body || {};
+    const normalizedUsername = String(username || "").trim().toLowerCase();
+    const normalizedToken = String(resetToken || "").trim().toUpperCase();
+    const normalizedPassword = String(newPassword || "");
+    if (!normalizedUsername || !normalizedToken || !normalizedPassword) {
+      return res.status(400).json({ error: "username, resetToken, newPassword required." });
+    }
+    if (normalizedPassword.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters." });
+    }
+    const rows = await allDb(
+      "SELECT id, username, resetToken, resetExpiresAt, isAdmin FROM users WHERE username = ? LIMIT 1",
+      [normalizedUsername]
+    );
+    if (!rows.length) return res.status(404).json({ error: "User not found." });
+    const u = rows[0];
+    const expiresAt = Number(u.resetExpiresAt || 0);
+    if (!u.resetToken || String(u.resetToken).toUpperCase() !== normalizedToken || !expiresAt || expiresAt < Date.now()) {
+      return res.status(400).json({ error: "Invalid or expired reset token." });
+    }
+    const passwordHash = bcrypt.hashSync(normalizedPassword, 10);
+    await runDb("UPDATE users SET passwordHash = ?, resetToken = NULL, resetExpiresAt = NULL WHERE id = ?", [
+      passwordHash,
+      u.id
+    ]);
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Reset failed." });
+  }
+});
+
+app.get("/api/auth/me", (req, res) => {
+  const auth = getAuthenticatedSession(req);
+  if (!auth) {
+    return res.json({ authenticated: false });
+  }
+  return res.json({
+    authenticated: true,
+    username: auth.session.username,
+    isAdmin: Boolean(auth.session.isAdmin)
+  });
+});
+
+app.post("/api/auth/logout", (req, res) => {
+  const auth = getAuthenticatedSession(req);
+  if (auth) {
+    sessions.delete(auth.token);
+  }
+  clearSessionCookie(res);
+  return res.json({ ok: true });
+});
+
+app.use("/api", optionalIdentity);
+app.use("/downloads", optionalIdentity);
+
+function requireAdmin(req, res, next) {
+  if (!req.authIsAdmin) {
+    return res.status(403).json({ error: "Admin only." });
+  }
+  return next();
+}
+
+async function getGuestUsage(guestId) {
+  if (!guestId) return { completedDownloads: 0, totalJobs: 0 };
+  const rows = await allDb("SELECT completedDownloads, totalJobs FROM guest_usage WHERE guestId = ? LIMIT 1", [
+    guestId
+  ]);
+  if (!rows.length) return { completedDownloads: 0, totalJobs: 0 };
+  return {
+    completedDownloads: Number(rows[0].completedDownloads || 0),
+    totalJobs: Number(rows[0].totalJobs || 0)
+  };
+}
+
+async function bumpGuestTotalJobs(guestId, by = 1) {
+  if (!guestId) return;
+  await runDb(
+    "INSERT INTO guest_usage (guestId, completedDownloads, totalJobs) VALUES (?, 0, ?) ON CONFLICT(guestId) DO UPDATE SET totalJobs = totalJobs + ?",
+    [guestId, Number(by) || 0, Number(by) || 0]
+  );
+}
+
+async function recomputeGuestCompletedFromQueue(guestId) {
+  if (!guestId) return;
+  const rows = await allDb(
+    "SELECT COUNT(id) as c FROM queue_items WHERE guestId = ? AND status = 'completed'",
+    [guestId]
+  );
+  const c = Number(rows[0]?.c || 0);
+  await runDb(
+    "INSERT INTO guest_usage (guestId, completedDownloads, totalJobs) VALUES (?, ?, 0) ON CONFLICT(guestId) DO UPDATE SET completedDownloads = ?",
+    [guestId, c, c]
+  );
+}
 
 function withYtDlpDefaults(options = {}) {
   return {
@@ -152,6 +502,8 @@ function toItem(row) {
   const idNum = Number(row.id);
   return {
     id: Number.isFinite(idNum) ? idNum : row.id,
+    userId: Number(row.userId || 0),
+    guestId: row.guestId || "",
     url: row.url,
     videoId: row.videoId || "",
     title: row.title || "",
@@ -188,12 +540,12 @@ async function insertQueueItemIfEligible(url, qualityPreference, downloadType) {
 
   const existingRows = normalizedVideoId
     ? await allDb(
-        "SELECT * FROM queue_items WHERE videoId = ? AND downloadType = ? AND qualityPreference = ? AND status IN ('queued','downloading','merging','paused') ORDER BY id DESC LIMIT 1",
-        [normalizedVideoId, normalizedDownloadType, normalizedQuality]
+        "SELECT * FROM queue_items WHERE userId = ? AND guestId = ? AND videoId = ? AND downloadType = ? AND qualityPreference = ? AND status IN ('queued','downloading','merging','paused') ORDER BY id DESC LIMIT 1",
+        [this.userId, this.guestId || "", normalizedVideoId, normalizedDownloadType, normalizedQuality]
       )
     : await allDb(
-        "SELECT * FROM queue_items WHERE url = ? AND downloadType = ? AND qualityPreference = ? AND status IN ('queued','downloading','merging','paused') ORDER BY id DESC LIMIT 1",
-        [normalizedUrl, normalizedDownloadType, normalizedQuality]
+        "SELECT * FROM queue_items WHERE userId = ? AND guestId = ? AND url = ? AND downloadType = ? AND qualityPreference = ? AND status IN ('queued','downloading','merging','paused') ORDER BY id DESC LIMIT 1",
+        [this.userId, this.guestId || "", normalizedUrl, normalizedDownloadType, normalizedQuality]
       );
   if (existingRows.length > 0 && isNonRemovableStatus(existingRows[0].status)) {
     return {
@@ -205,8 +557,16 @@ async function insertQueueItemIfEligible(url, qualityPreference, downloadType) {
   }
 
   const result = await runDb(
-    "INSERT INTO queue_items (url, videoId, qualityPreference, downloadType, subtitleLanguage, status, progress, message) VALUES (?, ?, ?, ?, ?, 'queued', 0, 'Waiting in queue...')",
-    [normalizedUrl, normalizedVideoId, normalizedQuality, normalizedDownloadType, normalizedSubtitleLanguage]
+    "INSERT INTO queue_items (userId, guestId, url, videoId, qualityPreference, downloadType, subtitleLanguage, status, progress, message) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 0, 'Waiting in queue...')",
+    [
+      this.userId,
+      this.guestId || "",
+      normalizedUrl,
+      normalizedVideoId,
+      normalizedQuality,
+      normalizedDownloadType,
+      normalizedSubtitleLanguage
+    ]
   );
   const rows = await allDb("SELECT * FROM queue_items WHERE id = ?", [result.lastID]);
   const item = toItem(rows[0]);
@@ -215,7 +575,11 @@ async function insertQueueItemIfEligible(url, qualityPreference, downloadType) {
 }
 
 async function deleteQueueItemRow(id, shouldDeleteFile) {
-  const rows = await allDb("SELECT * FROM queue_items WHERE id = ?", [id]);
+  const rows = await allDb("SELECT * FROM queue_items WHERE id = ? AND userId = ? AND guestId = ?", [
+    id,
+    this.userId,
+    this.guestId || ""
+  ]);
   if (!rows.length) return { ok: false, reason: "not_found" };
   const item = toItem(rows[0]);
   if (item.status === "downloading" || item.status === "merging") {
@@ -232,7 +596,11 @@ async function deleteQueueItemRow(id, shouldDeleteFile) {
       }
     }
   }
-  await runDb("DELETE FROM queue_items WHERE id = ?", [id]);
+  await runDb("DELETE FROM queue_items WHERE id = ? AND userId = ? AND guestId = ?", [
+    id,
+    this.userId,
+    this.guestId || ""
+  ]);
   return { ok: true };
 }
 
@@ -250,8 +618,42 @@ async function pruneCompletedMissingFiles() {
 
 async function loadQueue() {
   await runDb(
+    `CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE,
+      passwordHash TEXT NOT NULL,
+      isAdmin INTEGER DEFAULT 0,
+      resetToken TEXT,
+      resetExpiresAt TEXT,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`
+  );
+
+  try {
+    await runDb("ALTER TABLE users ADD COLUMN resetToken TEXT");
+  } catch (_err) {
+    // Column already exists in existing databases.
+  }
+  try {
+    await runDb("ALTER TABLE users ADD COLUMN resetExpiresAt TEXT");
+  } catch (_err) {
+    // Column already exists in existing databases.
+  }
+
+  await runDb(
+    `CREATE TABLE IF NOT EXISTS guest_usage (
+      guestId TEXT PRIMARY KEY,
+      completedDownloads INTEGER DEFAULT 0,
+      totalJobs INTEGER DEFAULT 0,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`
+  );
+
+  await runDb(
     `CREATE TABLE IF NOT EXISTS queue_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      userId INTEGER DEFAULT 0,
+      guestId TEXT DEFAULT '',
       url TEXT NOT NULL,
       videoId TEXT DEFAULT '',
       title TEXT DEFAULT '',
@@ -267,6 +669,16 @@ async function loadQueue() {
       createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
     )`
   );
+  try {
+    await runDb("ALTER TABLE queue_items ADD COLUMN userId INTEGER DEFAULT 0");
+  } catch (_err) {
+    // Column already exists in existing databases.
+  }
+  try {
+    await runDb("ALTER TABLE queue_items ADD COLUMN guestId TEXT DEFAULT ''");
+  } catch (_err) {
+    // Column already exists in existing databases.
+  }
   try {
     await runDb("ALTER TABLE queue_items ADD COLUMN qualityPreference TEXT DEFAULT 'best'");
   } catch (_err) {
@@ -296,6 +708,23 @@ async function loadQueue() {
   await runDb("UPDATE queue_items SET status = 'queued', message = 'Resuming after restart...' WHERE status IN ('downloading', 'merging')");
   const rows = await allDb("SELECT * FROM queue_items ORDER BY id DESC");
   queue = rows.map(toItem);
+
+  const normalizedAdminUsername = DEFAULT_ADMIN_USERNAME.trim().toLowerCase();
+  if (normalizedAdminUsername) {
+    const adminExisting = await allDb("SELECT id FROM users WHERE username = ? LIMIT 1", [normalizedAdminUsername]);
+    const passwordHash = bcrypt.hashSync(String(DEFAULT_ADMIN_PASSWORD || "Test@162$$"), 10);
+    if (!adminExisting.length) {
+      await runDb("INSERT INTO users (username, passwordHash, isAdmin) VALUES (?, ?, 1)", [
+        normalizedAdminUsername,
+        passwordHash
+      ]);
+    } else {
+      await runDb("UPDATE users SET isAdmin = 1, passwordHash = ? WHERE username = ?", [
+        passwordHash,
+        normalizedAdminUsername
+      ]);
+    }
+  }
 }
 
 async function persistItem(item) {
@@ -564,6 +993,9 @@ async function processQueueItem(item) {
   } finally {
     activeTasks.delete(item.id);
     await refreshQueueFromDb();
+    if (item.userId === 0 && item.guestId) {
+      await recomputeGuestCompletedFromQueue(item.guestId);
+    }
     scheduleQueueProcessing();
   }
 }
@@ -579,8 +1011,24 @@ function scheduleQueueProcessing() {
 
 app.post("/api/queue", async (req, res) => {
   try {
+    if (!req.authUserId) {
+      const usage = await getGuestUsage(req.guestId);
+      if (usage.completedDownloads >= GUEST_FREE_COMPLETED_LIMIT) {
+        return res.status(403).json({
+          code: "login_required",
+          error: `Login required after ${GUEST_FREE_COMPLETED_LIMIT} downloads.`,
+          limit: GUEST_FREE_COMPLETED_LIMIT,
+          completedDownloads: usage.completedDownloads
+        });
+      }
+    }
     const { url, qualityPreference, downloadType } = req.body || {};
-    const r = await insertQueueItemIfEligible(url, qualityPreference, downloadType);
+    const r = await insertQueueItemIfEligible.call(
+      { userId: req.authUserId || 0, guestId: req.guestId || "" },
+      url,
+      qualityPreference,
+      downloadType
+    );
     if (!r.ok) {
       if (r.code === "duplicate_active") {
         return res.status(409).json({
@@ -589,6 +1037,9 @@ app.post("/api/queue", async (req, res) => {
         });
       }
       return res.status(400).json({ error: r.error || "Could not add video." });
+    }
+    if (!req.authUserId && req.guestId) {
+      await bumpGuestTotalJobs(req.guestId, 1);
     }
     scheduleQueueProcessing();
     return res.status(201).json(r.item);
@@ -606,11 +1057,27 @@ app.post("/api/queue/bulk", async (req, res) => {
     if (rawItems.length > MAX_BULK_QUEUE_ADD) {
       return res.status(400).json({ error: `Too many items (max ${MAX_BULK_QUEUE_ADD} per request).` });
     }
+    if (!req.authUserId) {
+      const usage = await getGuestUsage(req.guestId);
+      if (usage.completedDownloads >= GUEST_FREE_COMPLETED_LIMIT) {
+        return res.status(403).json({
+          code: "login_required",
+          error: `Login required after ${GUEST_FREE_COMPLETED_LIMIT} downloads.`,
+          limit: GUEST_FREE_COMPLETED_LIMIT,
+          completedDownloads: usage.completedDownloads
+        });
+      }
+    }
     const created = [];
     const errors = [];
     for (let i = 0; i < rawItems.length; i++) {
       const entry = rawItems[i] || {};
-      const r = await insertQueueItemIfEligible(entry.url, entry.qualityPreference, entry.downloadType);
+      const r = await insertQueueItemIfEligible.call(
+        { userId: req.authUserId || 0, guestId: req.guestId || "" },
+        entry.url,
+        entry.qualityPreference,
+        entry.downloadType
+      );
       if (r.ok) {
         created.push(r.item);
       } else {
@@ -622,6 +1089,9 @@ app.post("/api/queue/bulk", async (req, res) => {
           existingItem: r.existingItem
         });
       }
+    }
+    if (!req.authUserId && req.guestId && created.length) {
+      await bumpGuestTotalJobs(req.guestId, created.length);
     }
     scheduleQueueProcessing();
     return res.json({ created, errors });
@@ -649,13 +1119,30 @@ app.post("/api/formats", async (req, res) => {
 
 app.get("/api/queue", async (_req, res) => {
   await refreshQueueFromDb();
-  res.json(queue);
+  const viewerId = _req.authUserId || 0;
+  const guestId = _req.guestId || "";
+  const visible = _req.authIsAdmin
+    ? queue
+    : queue.filter((q) =>
+        viewerId
+          ? Number(q.userId || 0) === Number(viewerId)
+          : Number(q.userId || 0) === 0 && String(q.guestId || "") === String(guestId)
+      );
+  res.json(visible);
 });
 
 app.post("/api/queue/:id/action", async (req, res) => {
   const id = Number(req.params.id);
   const { action } = req.body || {};
-  const item = queue.find((q) => q.id === id);
+  const viewerId = req.authUserId || 0;
+  const guestId = req.guestId || "";
+  const item = queue.find((q) =>
+    q.id === id
+      ? viewerId
+        ? Number(q.userId || 0) === Number(viewerId)
+        : Number(q.userId || 0) === 0 && String(q.guestId || "") === String(guestId)
+      : false
+  );
   if (!item) return res.status(404).json({ error: "Queue item not found." });
 
   if (!["pause", "resume", "cancel"].includes(action)) {
@@ -708,7 +1195,11 @@ app.post("/api/queue/bulk-delete", async (req, res) => {
     const removed = [];
     const skipped = [];
     for (const id of uniqueIds) {
-      const result = await deleteQueueItemRow(id, shouldDeleteFile);
+      const result = await deleteQueueItemRow.call(
+        { userId: req.authUserId || 0, guestId: req.guestId || "" },
+        id,
+        shouldDeleteFile
+      );
       if (result.ok) {
         removed.push(id);
       } else {
@@ -729,7 +1220,11 @@ app.post("/api/queue/bulk-delete", async (req, res) => {
 app.delete("/api/queue/:id", async (req, res) => {
   const id = Number(req.params.id);
   const shouldDeleteFile = String(req.query.deleteFile || "false").toLowerCase() === "true";
-  const result = await deleteQueueItemRow(id, shouldDeleteFile);
+  const result = await deleteQueueItemRow.call(
+    { userId: req.authUserId || 0, guestId: req.guestId || "" },
+    id,
+    shouldDeleteFile
+  );
   if (!result.ok) {
     if (result.reason === "not_found") {
       return res.status(404).json({ error: "Queue item not found." });
@@ -746,7 +1241,173 @@ app.delete("/api/queue/:id", async (req, res) => {
   return res.status(204).send();
 });
 
-app.use("/downloads", express.static(downloadsDir));
+app.get("/downloads/:filename", async (req, res) => {
+  try {
+    const rawName = String(req.params.filename || "");
+    const fileName = path.basename(rawName);
+    const filePath = path.join(downloadsDir, fileName);
+    if (!fs.existsSync(filePath)) return res.status(404).send("Not found");
+
+    const rows = await allDb(
+      "SELECT id, userId, guestId FROM queue_items WHERE filename = ? AND status = 'completed' ORDER BY id DESC LIMIT 1",
+      [fileName]
+    );
+    if (!rows.length) return res.status(404).send("Not found");
+    const ownerId = Number(rows[0].userId || 0);
+    const ownerGuestId = String(rows[0].guestId || "");
+    const viewerId = Number(req.authUserId || 0);
+    const viewerGuestId = String(req.guestId || "");
+    if (!req.authIsAdmin && !(ownerId && ownerId === viewerId) && !(ownerId === 0 && ownerGuestId && ownerGuestId === viewerGuestId)) {
+      return res.status(403).send("Forbidden");
+    }
+    return res.sendFile(filePath);
+  } catch (_err) {
+    return res.status(500).send("Server error");
+  }
+});
+
+app.get("/api/analytics/users", requireAdmin, async (_req, res) => {
+  try {
+    const rows = await allDb(
+      `SELECT u.id as userId, u.username as username,
+              SUM(CASE WHEN q.status = 'completed' THEN 1 ELSE 0 END) as completedDownloads,
+              COUNT(q.id) as totalJobs
+       FROM users u
+       LEFT JOIN queue_items q ON q.userId = u.id
+       GROUP BY u.id, u.username
+       ORDER BY completedDownloads DESC, totalJobs DESC, u.username ASC`
+    );
+    return res.json(
+      rows.map((r) => ({
+        userId: r.userId,
+        username: r.username,
+        completedDownloads: Number(r.completedDownloads || 0),
+        totalJobs: Number(r.totalJobs || 0)
+      }))
+    );
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Analytics failed." });
+  }
+});
+
+app.get("/api/analytics/me", requireAuth, async (req, res) => {
+  try {
+    const uid = Number(req.authUserId || 0);
+    const gid = String(req.guestId || "");
+    if (uid > 0) {
+      const rows = await allDb(
+        `SELECT
+          SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completedDownloads,
+          COUNT(id) as totalJobs
+         FROM queue_items
+         WHERE userId = ?`,
+        [uid]
+      );
+      const r = rows[0] || {};
+      return res.json({
+        viewerType: "user",
+        username: req.authUser,
+        isAdmin: Boolean(req.authIsAdmin),
+        completedDownloads: Number(r.completedDownloads || 0),
+        totalJobs: Number(r.totalJobs || 0)
+      });
+    }
+    const usage = await getGuestUsage(gid);
+    return res.json({
+      viewerType: "guest",
+      username: "Guest",
+      completedDownloads: Number(usage.completedDownloads || 0),
+      totalJobs: Number(usage.totalJobs || 0),
+      freeLimit: GUEST_FREE_COMPLETED_LIMIT
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Analytics failed." });
+  }
+});
+
+app.get("/api/analytics/activity", requireAuth, async (req, res) => {
+  try {
+    let rows = [];
+    if (req.authIsAdmin) {
+      rows = await allDb(
+        `SELECT
+           q.id,
+           q.userId,
+           q.guestId,
+           COALESCE(u.username, 'guest') as owner,
+           q.url,
+           q.videoId,
+           q.downloadType,
+           q.qualityPreference,
+           q.status,
+           q.progress,
+           q.message,
+           q.createdAt
+         FROM queue_items q
+         LEFT JOIN users u ON u.id = q.userId
+         ORDER BY q.id DESC
+         LIMIT 500`
+      );
+    } else if (Number(req.authUserId || 0) > 0) {
+      rows = await allDb(
+        `SELECT
+           q.id,
+           q.userId,
+           q.guestId,
+           ? as owner,
+           q.url,
+           q.videoId,
+           q.downloadType,
+           q.qualityPreference,
+           q.status,
+           q.progress,
+           q.message,
+           q.createdAt
+         FROM queue_items q
+         WHERE q.userId = ?
+         ORDER BY q.id DESC
+         LIMIT 300`,
+        [req.authUser || "user", Number(req.authUserId || 0)]
+      );
+    } else {
+      rows = await allDb(
+        `SELECT
+           q.id,
+           q.userId,
+           q.guestId,
+           'guest' as owner,
+           q.url,
+           q.videoId,
+           q.downloadType,
+           q.qualityPreference,
+           q.status,
+           q.progress,
+           q.message,
+           q.createdAt
+         FROM queue_items q
+         WHERE q.userId = 0 AND q.guestId = ?
+         ORDER BY q.id DESC
+         LIMIT 300`,
+        [String(req.guestId || "")]
+      );
+    }
+    return res.json(rows);
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Activity analytics failed." });
+  }
+});
+
+app.get("/api/users", requireAdmin, async (_req, res) => {
+  const rows = await allDb("SELECT id, username, isAdmin, createdAt FROM users ORDER BY id DESC");
+  res.json(
+    rows.map((u) => ({
+      id: u.id,
+      username: u.username,
+      isAdmin: Boolean(u.isAdmin),
+      createdAt: u.createdAt
+    }))
+  );
+});
 app.use(express.static(path.join(__dirname, "public")));
 
 loadQueue()

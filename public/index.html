@@ -8,7 +8,37 @@
   </head>
   <body>
     <main class="container">
+      <section id="login-card" class="auth-card hidden">
+        <h2>Welcome Back</h2>
+        <p class="auth-subtitle">Login or create account to continue after free guest limit.</p>
+        <form id="login-form" class="queue-form">
+          <input id="login-username" type="text" placeholder="Username" autocomplete="username" required />
+          <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" required />
+          <button type="submit" class="auth-primary-btn">Login</button>
+        </form>
+        <div class="auth-actions">
+          <button type="button" id="show-register-btn" class="auth-secondary-btn">Create account</button>
+        </div>
+
+        <form id="register-form" class="queue-form hidden">
+          <input id="register-username" type="text" placeholder="New username (3-30 chars)" autocomplete="username" />
+          <input
+            id="register-password"
+            type="password"
+            placeholder="New password (min 6 chars)"
+            autocomplete="new-password"
+          />
+          <button type="submit" class="auth-primary-btn">Register</button>
+        </form>
+        <p id="auth-status-text" class="status-text"></p>
+      </section>
+
+      <section id="app-shell" class="app-shell">
       <section class="hero-card">
+        <div class="session-bar">
+          <span id="welcome-user" class="welcome-user"></span>
+          <button type="button" id="logout-btn" class="logout-btn">Logout</button>
+        </div>
         <h1>YouTube Downloader Pro</h1>
         <p>Queue YouTube videos with quality control or paste multiple URLs at once.</p>
 
@@ -100,6 +130,14 @@
           </button>
         </div>
         <div id="queue-list" class="queue-list"></div>
+      </section>
+
+      <section id="analytics-section" class="queue-section hidden">
+        <h2>Analytics</h2>
+        <p class="tab-hint">Your dashboard always visible. Admin sees all users and full activity.</p>
+        <button type="button" id="refresh-analytics-btn" class="secondary-btn">Refresh analytics</button>
+        <div id="analytics-table" class="analytics-table"></div>
+      </section>
       </section>
     </main>
 

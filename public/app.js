@@ -2,10 +2,26 @@ const form = document.getElementById("queue-form");
 const urlInput = document.getElementById("url-input");
 const statusText = document.getElementById("status-text");
 const queueList = document.getElementById("queue-list");
+const loginForm = document.getElementById("login-form");
+const loginUsernameInput = document.getElementById("login-username");
+const loginPasswordInput = document.getElementById("login-password");
+const authStatusText = document.getElementById("auth-status-text");
+const loginCard = document.getElementById("login-card");
+const appShell = document.getElementById("app-shell");
+const logoutBtn = document.getElementById("logout-btn");
+const welcomeUser = document.getElementById("welcome-user");
+const showRegisterBtn = document.getElementById("show-register-btn");
+const registerForm = document.getElementById("register-form");
+const registerUsernameInput = document.getElementById("register-username");
+const registerPasswordInput = document.getElementById("register-password");
+const analyticsSection = document.getElementById("analytics-section");
+const refreshAnalyticsBtn = document.getElementById("refresh-analytics-btn");
+const analyticsTable = document.getElementById("analytics-table");
 const loadQualityBtn = document.getElementById("load-quality-btn");
 const optionButtons = document.getElementById("option-buttons");
 const defaultLoadButtonText = loadQualityBtn.textContent;
 let openPreviewItemId = null;
+let queueRefreshTimer = null;
 
 const bulkTabMatchOptions = document.getElementById("bulk-tab-match-options");
 const bulkUrlsInput = document.getElementById("bulk-urls-input");
@@ -59,6 +75,47 @@ function initTabs() {
 
 initTabs();
 
+function setAuthStatus(message) {
+  if (authStatusText) authStatusText.textContent = message || "";
+}
+
+function setMainStatus(message) {
+  if (statusText) statusText.textContent = message || "";
+}
+
+function setAppVisible(isVisible) {
+  if (loginCard) loginCard.classList.toggle("hidden", isVisible);
+  if (appShell) appShell.classList.toggle("hidden", !isVisible);
+}
+
+function stopQueueRefresh() {
+  if (queueRefreshTimer !== null) {
+    window.clearInterval(queueRefreshTimer);
+    queueRefreshTimer = null;
+  }
+}
+
+function handleUnauthorized() {
+  stopQueueRefresh();
+  setAuthStatus("Please login to continue.");
+  setMainStatus("Please login first.");
+}
+
+function handleLoginRequired(message) {
+  setAppVisible(false);
+  setAuthStatus(message || "Login required to continue.");
+  setMainStatus(message || "Login required to continue.");
+}
+
+async function authFetch(url, options = {}) {
+  const res = await fetch(url, options);
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new Error("Please login first.");
+  }
+  return res;
+}
+
 function closePreviewCard(card) {
   const previewHolder = card.querySelector(".preview-holder");
   const thumbImg = card.querySelector(".thumb");
@@ -88,7 +145,7 @@ function closeAllOtherPreviews(activeCard) {
 }
 
 async function fetchQueue() {
-  const res = await fetch("/api/queue");
+  const res = await authFetch("/api/queue");
   if (!res.ok) {
     throw new Error("Failed to fetch queue");
   }
@@ -96,7 +153,7 @@ async function fetchQueue() {
 }
 
 async function fetchQualities(url) {
-  const res = await fetch("/api/formats", {
+  const res = await authFetch("/api/formats", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ url })
@@ -109,7 +166,7 @@ async function fetchQualities(url) {
 }
 
 async function addToQueue(url, payload) {
-  const res = await fetch("/api/queue", {
+  const res = await authFetch("/api/queue", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ url, ...payload })
@@ -117,6 +174,10 @@ async function addToQueue(url, payload) {
   const data = await res.json();
 
   if (!res.ok) {
+    if (res.status === 403 && data.code === "login_required") {
+      handleLoginRequired(data.error || "Login required.");
+      throw new Error(data.error || "Login required.");
+    }
     if (res.status === 409 && data.existingItem) {
       throw new Error(
         `${data.error} Existing item #${data.existingItem.id} is ${statusLabel(data.existingItem.status)}.`
@@ -230,7 +291,7 @@ function statusLabel(status) {
 }
 
 async function queueAction(id, action) {
-  const res = await fetch(`/api/queue/${id}/action`, {
+  const res = await authFetch(`/api/queue/${id}/action`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action })
@@ -262,7 +323,7 @@ async function queueUrlsBulk(urls, qualityPreference, downloadType) {
     return;
   }
   statusText.textContent = `Adding ${urls.length} item(s) to queue...`;
-  const res = await fetch("/api/queue/bulk", {
+  const res = await authFetch("/api/queue/bulk", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -271,6 +332,10 @@ async function queueUrlsBulk(urls, qualityPreference, downloadType) {
   });
   const data = await res.json();
   if (!res.ok) {
+    if (res.status === 403 && data.code === "login_required") {
+      handleLoginRequired(data.error || "Login required.");
+      throw new Error(data.error || "Login required.");
+    }
     throw new Error(data.error || "Bulk add failed");
   }
   const n = (data.created && data.created.length) || 0;
@@ -410,7 +475,7 @@ function createQueueItem(item) {
     removeBtn.onclick = async () => {
       try {
         const { deleteFileToo } = askRemoveMode();
-        const res = await fetch(`/api/queue/${item.id}?deleteFile=${deleteFileToo ? "true" : "false"}`, {
+        const res = await authFetch(`/api/queue/${item.id}?deleteFile=${deleteFileToo ? "true" : "false"}`, {
           method: "DELETE"
         });
         if (!res.ok) {
@@ -526,9 +591,11 @@ async function refreshQueue(force = false) {
   }
 }
 
-form.addEventListener("submit", (event) => {
-  event.preventDefault();
-});
+if (form) {
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+  });
+}
 
 loadQualityBtn.addEventListener("click", async () => {
   const url = urlInput.value.trim();
@@ -647,7 +714,7 @@ if (bulkDeleteBtn) {
       return;
     }
     try {
-      const res = await fetch("/api/queue/bulk-delete", {
+      const res = await authFetch("/api/queue/bulk-delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -723,5 +790,191 @@ if (bulkDownloadBtn) {
   });
 }
 
-setInterval(refreshQueue, 1500);
-refreshQueue();
+async function checkAuthSession() {
+  const res = await fetch("/api/auth/me");
+  if (!res.ok) return { authenticated: false };
+  return res.json();
+}
+
+function setRegisterVisible(isVisible) {
+  if (registerForm) registerForm.classList.toggle("hidden", !isVisible);
+  if (showRegisterBtn) showRegisterBtn.classList.toggle("hidden", isVisible);
+}
+
+async function submitRegister(event) {
+  event.preventDefault();
+  const username = registerUsernameInput ? registerUsernameInput.value.trim() : "";
+  const password = registerPasswordInput ? registerPasswordInput.value : "";
+  if (!username || !password) {
+    setAuthStatus("Username and password required for registration.");
+    return;
+  }
+  setAuthStatus("Creating account...");
+  const res = await fetch("/api/auth/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password })
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || "Registration failed");
+  }
+  setAuthStatus("");
+  setRegisterVisible(false);
+  await startAuthenticatedApp(data.username || username, Boolean(data.isAdmin));
+}
+
+function renderAnalyticsRows(rows) {
+  if (!analyticsTable) return;
+  analyticsTable.innerHTML = "";
+  const header = document.createElement("div");
+  header.className = "analytics-row is-header";
+  header.innerHTML = "<div>User</div><div>Completed</div><div>Total jobs</div>";
+  analyticsTable.appendChild(header);
+
+  for (const r of rows) {
+    const row = document.createElement("div");
+    row.className = "analytics-row";
+    row.innerHTML = `<div>${r.username || r.owner || "guest"}</div><div>${r.completedDownloads || 0}</div><div>${r.totalJobs || 0}</div>`;
+    analyticsTable.appendChild(row);
+  }
+}
+
+async function refreshAnalytics() {
+  const meRes = await authFetch("/api/analytics/me");
+  const me = await meRes.json();
+  if (!meRes.ok) throw new Error(me.error || "Analytics failed");
+
+  const activityRes = await authFetch("/api/analytics/activity");
+  const activity = await activityRes.json();
+  if (!activityRes.ok) throw new Error(activity.error || "Activity analytics failed");
+
+  if (me.viewerType === "user" && !me.isAdmin) {
+    renderAnalyticsRows([me]);
+  } else if (me.viewerType === "guest") {
+    renderAnalyticsRows([me]);
+  } else {
+    const usersRes = await authFetch("/api/analytics/users");
+    const users = await usersRes.json();
+    if (!usersRes.ok) throw new Error(users.error || "Analytics failed");
+    renderAnalyticsRows(Array.isArray(users) ? users : []);
+  }
+
+  if (analyticsTable) {
+    const divider = document.createElement("div");
+    divider.className = "analytics-row is-header";
+    divider.innerHTML = "<div>Recent Activity Owner</div><div>Status</div><div>Type</div>";
+    analyticsTable.appendChild(divider);
+    for (const a of (Array.isArray(activity) ? activity : []).slice(0, 20)) {
+      const row = document.createElement("div");
+      row.className = "analytics-row";
+      row.innerHTML = `<div>${a.owner || "guest"}</div><div>${a.status || "-"}</div><div>${a.downloadType || "-"}</div>`;
+      analyticsTable.appendChild(row);
+    }
+  }
+}
+
+async function submitLogin(event) {
+  event.preventDefault();
+  const username = loginUsernameInput ? loginUsernameInput.value.trim() : "";
+  const password = loginPasswordInput ? loginPasswordInput.value : "";
+  if (!username || !password) {
+    setAuthStatus("Username and password required.");
+    return;
+  }
+  setAuthStatus("Logging in...");
+  const res = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password })
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || "Login failed");
+  }
+  setAuthStatus("");
+  setRegisterVisible(false);
+  await startAuthenticatedApp(data.username || username, Boolean(data.isAdmin));
+}
+
+async function logout() {
+  await fetch("/api/auth/logout", { method: "POST" });
+  stopQueueRefresh();
+  setAppVisible(true);
+  if (analyticsSection) analyticsSection.classList.add("hidden");
+  setAuthStatus("Logged out. Please login again.");
+  setMainStatus("Please login first.");
+}
+
+async function startAuthenticatedApp(username, isAdmin) {
+  setAppVisible(true);
+  if (welcomeUser) {
+    welcomeUser.textContent = username ? `Logged in as: ${username}` : "Logged in";
+  }
+  setMainStatus("");
+  await refreshQueue(true);
+  stopQueueRefresh();
+  queueRefreshTimer = window.setInterval(refreshQueue, 1500);
+  if (analyticsSection) analyticsSection.classList.remove("hidden");
+  await refreshAnalytics().catch(() => {});
+}
+
+async function bootstrapAuth() {
+  const session = await checkAuthSession();
+  if (session && session.authenticated) {
+    await startAuthenticatedApp(session.username || "", Boolean(session.isAdmin));
+    return;
+  }
+  setAppVisible(true);
+  if (welcomeUser) welcomeUser.textContent = "Guest mode";
+  if (analyticsSection) analyticsSection.classList.add("hidden");
+  stopQueueRefresh();
+  queueRefreshTimer = window.setInterval(refreshQueue, 1500);
+  await refreshQueue(true).catch(() => {});
+}
+
+if (loginForm) {
+  loginForm.addEventListener("submit", (event) => {
+    submitLogin(event).catch((err) => {
+      setAuthStatus(err.message || "Login failed.");
+    });
+  });
+}
+
+if (showRegisterBtn) {
+  showRegisterBtn.addEventListener("click", () => {
+    setRegisterVisible(true);
+    setAuthStatus("");
+  });
+}
+
+if (registerForm) {
+  registerForm.addEventListener("submit", (event) => {
+    submitRegister(event).catch((err) => {
+      setAuthStatus(err.message || "Registration failed.");
+    });
+  });
+}
+
+if (logoutBtn) {
+  logoutBtn.addEventListener("click", () => {
+    logout().catch(() => {
+      stopQueueRefresh();
+      setAppVisible(false);
+      setAuthStatus("Logged out.");
+    });
+  });
+}
+
+if (refreshAnalyticsBtn) {
+  refreshAnalyticsBtn.addEventListener("click", () => {
+    refreshAnalytics().catch((err) => {
+      setMainStatus(err.message || "Analytics failed.");
+    });
+  });
+}
+
+bootstrapAuth().catch(() => {
+  stopQueueRefresh();
+  setAppVisible(false);
+});
