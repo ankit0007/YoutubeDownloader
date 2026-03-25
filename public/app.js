@@ -10,6 +10,7 @@ const loginCard = document.getElementById("login-card");
 const appShell = document.getElementById("app-shell");
 const logoutBtn = document.getElementById("logout-btn");
 const welcomeUser = document.getElementById("welcome-user");
+const showLoginBtn = document.getElementById("show-login-btn");
 const showRegisterBtn = document.getElementById("show-register-btn");
 const registerForm = document.getElementById("register-form");
 const registerUsernameInput = document.getElementById("register-username");
@@ -97,12 +98,15 @@ function stopQueueRefresh() {
 
 function handleUnauthorized() {
   stopQueueRefresh();
+  setAppVisible(false);
+  setRegisterVisible(false);
   setAuthStatus("Please login to continue.");
   setMainStatus("Please login first.");
 }
 
 function handleLoginRequired(message) {
   setAppVisible(false);
+  setRegisterVisible(false);
   setAuthStatus(message || "Login required to continue.");
   setMainStatus(message || "Login required to continue.");
 }
@@ -597,34 +601,36 @@ if (form) {
   });
 }
 
-loadQualityBtn.addEventListener("click", async () => {
-  const url = urlInput.value.trim();
-  if (!url) {
-    statusText.textContent = "Please paste YouTube URL first.";
-    return;
-  }
+if (loadQualityBtn) {
+  loadQualityBtn.addEventListener("click", async () => {
+    const url = urlInput.value.trim();
+    if (!url) {
+      statusText.textContent = "Please paste YouTube URL first.";
+      return;
+    }
 
-  optionButtons.innerHTML = "";
-  optionButtons.innerHTML = "<span class=\"loading-chip\">Loading options...</span>";
-  statusText.textContent = "Fetching latest options for this URL...";
-  loadQualityBtn.disabled = true;
-  loadQualityBtn.textContent = "Loading...";
-  loadQualityBtn.classList.add("is-loading");
-  try {
-    const data = await fetchQualities(url);
-    renderOptionButtons(url, data);
-    statusText.textContent = data.title
-      ? `Options loaded for: ${data.title}. Click any button to queue.`
-      : "Options loaded. Click any button to queue.";
-  } catch (err) {
-    statusText.textContent = err.message;
     optionButtons.innerHTML = "";
-  } finally {
-    loadQualityBtn.disabled = false;
-    loadQualityBtn.textContent = defaultLoadButtonText;
-    loadQualityBtn.classList.remove("is-loading");
-  }
-});
+    optionButtons.innerHTML = "<span class=\"loading-chip\">Loading options...</span>";
+    statusText.textContent = "Fetching latest options for this URL...";
+    loadQualityBtn.disabled = true;
+    loadQualityBtn.textContent = "Loading...";
+    loadQualityBtn.classList.add("is-loading");
+    try {
+      const data = await fetchQualities(url);
+      renderOptionButtons(url, data);
+      statusText.textContent = data.title
+        ? `Options loaded for: ${data.title}. Click any button to queue.`
+        : "Options loaded. Click any button to queue.";
+    } catch (err) {
+      statusText.textContent = err.message;
+      optionButtons.innerHTML = "";
+    } finally {
+      loadQualityBtn.disabled = false;
+      loadQualityBtn.textContent = defaultLoadButtonText;
+      loadQualityBtn.classList.remove("is-loading");
+    }
+  });
+}
 
 if (selectAllCheckbox) {
   selectAllCheckbox.addEventListener("change", () => {
@@ -798,7 +804,9 @@ async function checkAuthSession() {
 
 function setRegisterVisible(isVisible) {
   if (registerForm) registerForm.classList.toggle("hidden", !isVisible);
-  if (showRegisterBtn) showRegisterBtn.classList.toggle("hidden", isVisible);
+  if (loginForm) loginForm.classList.toggle("hidden", isVisible);
+  if (showLoginBtn) showLoginBtn.classList.toggle("is-active", !isVisible);
+  if (showRegisterBtn) showRegisterBtn.classList.toggle("is-active", isVisible);
 }
 
 async function submitRegister(event) {
@@ -901,9 +909,18 @@ async function logout() {
   await fetch("/api/auth/logout", { method: "POST" });
   stopQueueRefresh();
   setAppVisible(true);
+  setRegisterVisible(false);
   if (analyticsSection) analyticsSection.classList.add("hidden");
+  if (optionButtons) optionButtons.innerHTML = "";
+  if (bulkTabMatchOptions) {
+    bulkTabMatchOptions.innerHTML = "";
+    bulkTabMatchOptions.classList.add("hidden");
+  }
   setAuthStatus("Logged out. Please login again.");
   setMainStatus("Please login first.");
+  if (welcomeUser) welcomeUser.textContent = "Guest mode";
+  queueRefreshTimer = window.setInterval(refreshQueue, 1500);
+  await refreshQueue(true).catch(() => {});
 }
 
 async function startAuthenticatedApp(username, isAdmin) {
@@ -948,6 +965,13 @@ if (showRegisterBtn) {
   });
 }
 
+if (showLoginBtn) {
+  showLoginBtn.addEventListener("click", () => {
+    setRegisterVisible(false);
+    setAuthStatus("");
+  });
+}
+
 if (registerForm) {
   registerForm.addEventListener("submit", (event) => {
     submitRegister(event).catch((err) => {
@@ -960,8 +984,10 @@ if (logoutBtn) {
   logoutBtn.addEventListener("click", () => {
     logout().catch(() => {
       stopQueueRefresh();
-      setAppVisible(false);
-      setAuthStatus("Logged out.");
+      setAppVisible(true);
+      setRegisterVisible(false);
+      if (analyticsSection) analyticsSection.classList.add("hidden");
+      setAuthStatus("Logout failed. Try again.");
     });
   });
 }
@@ -976,5 +1002,7 @@ if (refreshAnalyticsBtn) {
 
 bootstrapAuth().catch(() => {
   stopQueueRefresh();
-  setAppVisible(false);
+  setAppVisible(true);
+  if (analyticsSection) analyticsSection.classList.add("hidden");
+  setMainStatus("App loaded in guest mode.");
 });

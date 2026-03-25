@@ -9,16 +9,20 @@
   <body>
     <main class="container">
       <section id="login-card" class="auth-card hidden">
-        <h2>Welcome Back</h2>
-        <p class="auth-subtitle">Login or create account to continue after free guest limit.</p>
+        <div class="auth-header">
+          <div class="auth-badge">YouTube Downloader Pro</div>
+          <h2>Account Access</h2>
+          <p class="auth-subtitle">Continue with your account when guest free limit is reached.</p>
+        </div>
+        <div class="auth-toggle" role="tablist" aria-label="Authentication forms">
+          <button type="button" id="show-login-btn" class="auth-switch-btn is-active">Login</button>
+          <button type="button" id="show-register-btn" class="auth-switch-btn">Register</button>
+        </div>
         <form id="login-form" class="queue-form">
           <input id="login-username" type="text" placeholder="Username" autocomplete="username" required />
           <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" required />
           <button type="submit" class="auth-primary-btn">Login</button>
         </form>
-        <div class="auth-actions">
-          <button type="button" id="show-register-btn" class="auth-secondary-btn">Create account</button>
-        </div>
 
         <form id="register-form" class="queue-form hidden">
           <input id="register-username" type="text" placeholder="New username (3-30 chars)" autocomplete="username" />
