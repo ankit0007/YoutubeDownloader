@@ -498,6 +498,154 @@ async function getVideoMetadataWithYtDlp(url) {
   });
 }
 
+async function runYtDlpDumpJson(url, ytDlpOptions) {
+  return new Promise((resolve, reject) => {
+    const child = ytDlp.exec(url, withYtDlpDefaults(ytDlpOptions));
+    let stdoutData = "";
+    let stderrData = "";
+    if (child.stdout) {
+      child.stdout.on("data", (chunk) => {
+        stdoutData += String(chunk || "");
+      });
+    }
+    if (child.stderr) {
+      child.stderr.on("data", (chunk) => {
+        stderrData += String(chunk || "");
+      });
+    }
+    child.on("error", (err) => reject(err));
+    child.on("close", (code) => {
+      if (code !== 0) {
+        return reject(new Error(stderrData || `yt-dlp exited with code ${code}`));
+      }
+      try {
+        return resolve(JSON.parse(stdoutData));
+      } catch (_err) {
+        return reject(new Error("Failed to parse yt-dlp JSON output."));
+      }
+    });
+  });
+}
+
+function watchUrlFromFlatEntry(entry) {
+  if (!entry || typeof entry !== "object") return "";
+  const id = entry.id;
+  if (typeof id === "string" && /^[\w-]{11}$/.test(id)) {
+    return `https://www.youtube.com/watch?v=${id}`;
+  }
+  for (const key of ["url", "webpage_url"]) {
+    const u = entry[key];
+    if (typeof u === "string" && u.startsWith("http")) {
+      const trimmed = u.trim();
+      try {
+        if (ytdl.validateURL(trimmed)) return trimmed;
+        const vid = ytdl.getURLVideoID(trimmed);
+        if (vid) return `https://www.youtube.com/watch?v=${vid}`;
+      } catch (_e) {
+        /* continue */
+      }
+    }
+  }
+  return "";
+}
+
+function extractWatchUrlsFromFlatJson(json) {
+  if (!json || typeof json !== "object") return [];
+  const entries = Array.isArray(json.entries) ? json.entries : [];
+  if (entries.length > 0) {
+    const out = [];
+    for (const e of entries) {
+      const w = watchUrlFromFlatEntry(e);
+      if (w) out.push(w);
+    }
+    return out;
+  }
+  const single = watchUrlFromFlatEntry(json);
+  return single ? [single] : [];
+}
+
+function dedupeWatchUrlsPreserveOrder(urls) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of urls) {
+    const u = String(raw || "").trim();
+    if (!u) continue;
+    const key = getVideoIdFromUrl(u) || u;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(u);
+  }
+  return out;
+}
+
+const MAX_BULK_INPUT_ROWS = 50;
+const MAX_EXPANDED_QUEUE_ADD = (() => {
+  const raw = process.env.MAX_EXPANDED_QUEUE_ADD;
+  if (raw === undefined || raw === "") return 50000;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 50000;
+  return Math.min(Math.floor(n), 100000);
+})();
+/** If unset or 0, yt-dlp gets the whole playlist (no --playlist-end). Set MAX_PLAYLIST_ITEMS to cap. */
+const MAX_PLAYLIST_ITEMS_PER_INPUT = (() => {
+  const raw = process.env.MAX_PLAYLIST_ITEMS;
+  if (raw === undefined || raw === "") return 0;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(Math.floor(n), 100000);
+})();
+const MAX_BULK_QUEUE_DELETE = 100;
+
+async function expandYoutubeInputToWatchUrls(rawInput) {
+  const url = String(rawInput || "").trim();
+  if (!url) return [];
+
+  let hasListParam = false;
+  try {
+    const uObj = new URL(url);
+    const host = uObj.hostname.toLowerCase();
+    if ((host.endsWith(".youtube.com") || host === "youtube.com" || host === "youtu.be") &&
+      uObj.searchParams.get("list")) {
+      hasListParam = true;
+    }
+  } catch (_e) {
+    /* ignore */
+  }
+
+  const extractFlat = async () => {
+    const dumpOpts = {
+      dumpSingleJson: true,
+      skipDownload: true,
+      flatPlaylist: true,
+      noPlaylist: false
+    };
+    if (MAX_PLAYLIST_ITEMS_PER_INPUT > 0) {
+      dumpOpts.playlistEnd = MAX_PLAYLIST_ITEMS_PER_INPUT;
+    }
+    const json = await runYtDlpDumpJson(url, dumpOpts);
+    return extractWatchUrlsFromFlatJson(json);
+  };
+
+  try {
+    if (ytdl.validateURL(url)) {
+      if (hasListParam) {
+        const fromPl = await extractFlat();
+        if (fromPl.length > 0) return dedupeWatchUrlsPreserveOrder(fromPl);
+      }
+      return dedupeWatchUrlsPreserveOrder([url]);
+    }
+    const fromPl = await extractFlat();
+    if (fromPl.length > 0) return dedupeWatchUrlsPreserveOrder(fromPl);
+  } catch (_err) {
+    /* fall through */
+  }
+
+  if (ytdl.validateURL(url)) {
+    return dedupeWatchUrlsPreserveOrder([url]);
+  }
+  return [];
+}
+
 function toItem(row) {
   const idNum = Number(row.id);
   return {
@@ -518,9 +666,6 @@ function toItem(row) {
     downloadUrl: row.downloadUrl || ""
   };
 }
-
-const MAX_BULK_QUEUE_ADD = 50;
-const MAX_BULK_QUEUE_DELETE = 100;
 
 async function insertQueueItemIfEligible(url, qualityPreference, downloadType) {
   if (url == null || typeof url !== "string" || !url.trim()) {
@@ -1012,26 +1157,68 @@ function scheduleQueueProcessing() {
 app.post("/api/queue", async (req, res) => {
   try {
     const { url, qualityPreference, downloadType } = req.body || {};
-    const r = await insertQueueItemIfEligible.call(
-      { userId: req.authUserId || 0, guestId: req.guestId || "" },
-      url,
-      qualityPreference,
-      downloadType
-    );
-    if (!r.ok) {
-      if (r.code === "duplicate_active") {
-        return res.status(409).json({
-          error: r.error || "This video is already active in queue.",
+    const trimmed = typeof url === "string" ? url.trim() : "";
+    if (!trimmed) {
+      return res.status(400).json({ error: "Please provide a valid YouTube URL or playlist." });
+    }
+
+    const expanded = await expandYoutubeInputToWatchUrls(trimmed);
+    if (!expanded.length) {
+      return res.status(400).json({ error: "Please provide a valid YouTube URL or playlist." });
+    }
+    if (expanded.length > MAX_EXPANDED_QUEUE_ADD) {
+      return res.status(400).json({
+        error: `Playlist too large (${expanded.length} videos, max ${MAX_EXPANDED_QUEUE_ADD}). Split into batches.`
+      });
+    }
+
+    const ctx = { userId: req.authUserId || 0, guestId: req.guestId || "" };
+
+    if (expanded.length === 1) {
+      const r = await insertQueueItemIfEligible.call(ctx, expanded[0], qualityPreference, downloadType);
+      if (!r.ok) {
+        if (r.code === "duplicate_active") {
+          return res.status(409).json({
+            error: r.error || "This video is already active in queue.",
+            existingItem: r.existingItem
+          });
+        }
+        return res.status(400).json({ error: r.error || "Could not add video." });
+      }
+      if (!req.authUserId && req.guestId) {
+        await bumpGuestTotalJobs(req.guestId, 1);
+      }
+      scheduleQueueProcessing();
+      return res.status(201).json(r.item);
+    }
+
+    const created = [];
+    const errors = [];
+    for (const u of expanded) {
+      const r = await insertQueueItemIfEligible.call(ctx, u, qualityPreference, downloadType);
+      if (r.ok) {
+        created.push(r.item);
+      } else {
+        errors.push({
+          url: u,
+          error: r.error || "Could not add",
+          code: r.code || "invalid",
           existingItem: r.existingItem
         });
       }
-      return res.status(400).json({ error: r.error || "Could not add video." });
     }
-    if (!req.authUserId && req.guestId) {
-      await bumpGuestTotalJobs(req.guestId, 1);
+
+    if (!req.authUserId && req.guestId && created.length) {
+      await bumpGuestTotalJobs(req.guestId, created.length);
     }
     scheduleQueueProcessing();
-    return res.status(201).json(r.item);
+
+    return res.status(201).json({
+      queued: created,
+      errors,
+      expandedCount: expanded.length,
+      playlistExpanded: true
+    });
   } catch (err) {
     return res.status(500).json({ error: err.message || "Could not add video." });
   }
@@ -1043,36 +1230,74 @@ app.post("/api/queue/bulk", async (req, res) => {
     if (!Array.isArray(rawItems) || rawItems.length === 0) {
       return res.status(400).json({ error: "Provide a non-empty items array." });
     }
-    if (rawItems.length > MAX_BULK_QUEUE_ADD) {
-      return res.status(400).json({ error: `Too many items (max ${MAX_BULK_QUEUE_ADD} per request).` });
+    if (rawItems.length > MAX_BULK_INPUT_ROWS) {
+      return res.status(400).json({ error: `Too many rows (max ${MAX_BULK_INPUT_ROWS} per request).` });
     }
-    const created = [];
+
+    const ctx = { userId: req.authUserId || 0, guestId: req.guestId || "" };
+    const flattened = [];
     const errors = [];
+
     for (let i = 0; i < rawItems.length; i++) {
       const entry = rawItems[i] || {};
-      const r = await insertQueueItemIfEligible.call(
-        { userId: req.authUserId || 0, guestId: req.guestId || "" },
-        entry.url,
-        entry.qualityPreference,
-        entry.downloadType
-      );
+      const lineUrl = typeof entry.url === "string" ? entry.url.trim() : "";
+      if (!lineUrl) {
+        errors.push({ index: i, url: "", error: "Empty URL.", code: "invalid" });
+        continue;
+      }
+      const urls = await expandYoutubeInputToWatchUrls(lineUrl);
+      if (!urls.length) {
+        errors.push({
+          index: i,
+          url: lineUrl,
+          error: "Could not resolve URL or playlist.",
+          code: "invalid"
+        });
+        continue;
+      }
+      for (const u of urls) {
+        flattened.push({
+          url: u,
+          qualityPreference: entry.qualityPreference,
+          downloadType: entry.downloadType,
+          sourceIndex: i
+        });
+      }
+    }
+
+    if (flattened.length > MAX_EXPANDED_QUEUE_ADD) {
+      return res.status(400).json({
+        error: `Too many videos after expanding playlists (max ${MAX_EXPANDED_QUEUE_ADD}). Fewer playlists per batch or split your list.`
+      });
+    }
+
+    const created = [];
+    for (let j = 0; j < flattened.length; j++) {
+      const row = flattened[j];
+      const r = await insertQueueItemIfEligible.call(ctx, row.url, row.qualityPreference, row.downloadType);
       if (r.ok) {
         created.push(r.item);
       } else {
         errors.push({
-          index: i,
-          url: typeof entry.url === "string" ? entry.url.trim() : "",
+          index: row.sourceIndex,
+          url: row.url,
           error: r.error || "Could not add",
           code: r.code || "invalid",
           existingItem: r.existingItem
         });
       }
     }
+
     if (!req.authUserId && req.guestId && created.length) {
       await bumpGuestTotalJobs(req.guestId, created.length);
     }
     scheduleQueueProcessing();
-    return res.json({ created, errors });
+    return res.json({
+      created,
+      errors,
+      expandedTotal: flattened.length,
+      inputRows: rawItems.length
+    });
   } catch (err) {
     return res.status(500).json({ error: err.message || "Bulk add failed." });
   }
@@ -1081,14 +1306,30 @@ app.post("/api/queue/bulk", async (req, res) => {
 app.post("/api/formats", async (req, res) => {
   try {
     const { url } = req.body || {};
-    if (!url || typeof url !== "string" || !ytdl.validateURL(url)) {
-      return res.status(400).json({ error: "Please provide a valid YouTube URL." });
+    if (!url || typeof url !== "string" || !String(url).trim()) {
+      return res.status(400).json({ error: "Please provide a valid YouTube URL or playlist." });
     }
 
-    const metadata = await getVideoMetadataWithYtDlp(url.trim());
+    const trimmed = url.trim();
+    let targetUrl = trimmed;
+    let playlistVideoCount = 1;
+
+    const expanded = await expandYoutubeInputToWatchUrls(trimmed);
+    if (expanded.length > 0) {
+      playlistVideoCount = expanded.length;
+      targetUrl = expanded[0];
+    } else if (ytdl.validateURL(trimmed)) {
+      targetUrl = trimmed;
+      playlistVideoCount = 1;
+    } else {
+      return res.status(400).json({ error: "Please provide a valid YouTube URL or playlist." });
+    }
+
+    const metadata = await getVideoMetadataWithYtDlp(targetUrl);
     return res.json({
       title: metadata?.title || "",
-      qualities: buildQualityOptionsFromMetadata(metadata)
+      qualities: buildQualityOptionsFromMetadata(metadata),
+      ...(playlistVideoCount > 1 ? { playlistVideoCount } : {})
     });
   } catch (err) {
     return res.status(500).json({ error: err.message || "Could not fetch quality options." });

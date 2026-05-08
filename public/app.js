@@ -193,7 +193,10 @@ async function addToQueue(url, payload) {
     }
     throw new Error(data.error || "Could not add video");
   }
-  return data;
+  if (data && Array.isArray(data.queued)) {
+    return { batch: data };
+  }
+  return { item: data };
 }
 
 function renderOptionButtons(url, data) {
@@ -209,11 +212,20 @@ function renderOptionButtons(url, data) {
     btn.onclick = async () => {
       try {
         statusText.textContent = `Adding video (${quality.label}) to queue...`;
-        const item = await addToQueue(url, {
+        const out = await addToQueue(url, {
           downloadType: "video",
           qualityPreference: quality.value
         });
-        statusText.textContent = `Added #${item.id} video ${quality.label}`;
+        if (out.batch) {
+          const n = out.batch.queued.length;
+          const e = (out.batch.errors || []).length;
+          statusText.textContent =
+            e > 0
+              ? `Playlist: queued ${n} video(s), ${e} skipped (e.g. already in queue).`
+              : `Playlist: queued ${n} video(s) at ${quality.label}.`;
+        } else if (out.item) {
+          statusText.textContent = `Added #${out.item.id} video ${quality.label}`;
+        }
         await refreshQueue(true);
       } catch (err) {
         statusText.textContent = err.message;
@@ -229,11 +241,20 @@ function renderOptionButtons(url, data) {
   mp3Btn.onclick = async () => {
     try {
       statusText.textContent = "Adding MP3 to queue...";
-      const item = await addToQueue(url, {
+      const out = await addToQueue(url, {
         downloadType: "mp3",
         qualityPreference: "best"
       });
-      statusText.textContent = `Added #${item.id} MP3`;
+      if (out.batch) {
+        const n = out.batch.queued.length;
+        const e = (out.batch.errors || []).length;
+        statusText.textContent =
+          e > 0
+            ? `Playlist: queued ${n} MP3 job(s), ${e} skipped.`
+            : `Playlist: queued ${n} MP3 download(s).`;
+      } else if (out.item) {
+        statusText.textContent = `Added #${out.item.id} MP3`;
+      }
       await refreshQueue(true);
     } catch (err) {
       statusText.textContent = err.message;
@@ -249,7 +270,7 @@ function renderBulkQualityOptions(data) {
   const videoOptions = Array.isArray(data.qualities) ? data.qualities : [];
   const hint = document.createElement("span");
   hint.className = "bulk-quality-hint";
-  hint.textContent = "Queue all lines in the list at:";
+  hint.textContent = "Queue all lines (each playlist expands to every video) at:";
   bulkTabMatchOptions.appendChild(hint);
 
   for (const quality of videoOptions) {
@@ -348,14 +369,18 @@ async function queueUrlsBulk(urls, qualityPreference, downloadType) {
   }
   const n = (data.created && data.created.length) || 0;
   const e = (data.errors && data.errors.length) || 0;
+  const total = typeof data.expandedTotal === "number" ? data.expandedTotal : null;
   if (e > 0) {
     const sample = data.errors
       .slice(0, 2)
       .map((x) => x.error || "error")
       .join("; ");
-    statusText.textContent = `Queued ${n}, skipped ${e}.${sample ? ` Examples: ${sample}` : ""}`;
+    statusText.textContent = `Queued ${n} download(s)${
+      total != null ? ` (${total} video URLs from list)` : ""
+    }; skipped/errors ${e}.${sample ? ` Examples: ${sample}` : ""}`;
   } else {
-    statusText.textContent = `Queued ${n} download(s).`;
+    statusText.textContent =
+      total != null ? `Queued ${n} download(s) (${total} video URLs resolved).` : `Queued ${n} download(s).`;
   }
   await refreshQueue(true);
 }
@@ -622,9 +647,13 @@ if (loadQualityBtn) {
     try {
       const data = await fetchQualities(url);
       renderOptionButtons(url, data);
+      const pl =
+        typeof data.playlistVideoCount === "number" && data.playlistVideoCount > 1
+          ? ` Playlist: ${data.playlistVideoCount} videos will be queued when you pick a format.`
+          : "";
       statusText.textContent = data.title
-        ? `Options loaded for: ${data.title}. Click any button to queue.`
-        : "Options loaded. Click any button to queue.";
+        ? `Options loaded for: ${data.title}.${pl} Click any button to queue.`
+        : `Options loaded.${pl} Click any button to queue.`;
     } catch (err) {
       statusText.textContent = err.message;
       optionButtons.innerHTML = "";
@@ -675,9 +704,13 @@ if (bulkLoadQualityBtn && bulkUrlsInput) {
     try {
       const data = await fetchQualities(url);
       renderBulkQualityOptions(data);
+      const pl =
+        typeof data.playlistVideoCount === "number" && data.playlistVideoCount > 1
+          ? ` First line is a playlist (${data.playlistVideoCount} videos); each playlist line expands to all videos.`
+          : "";
       statusText.textContent = data.title
-        ? `Quality options from: ${data.title}. Use chips to queue all lines.`
-        : "Quality options loaded.";
+        ? `Quality from first video: ${data.title}.${pl} Use buttons below to queue all lines.`
+        : `Quality options loaded.${pl}`;
     } catch (err) {
       statusText.textContent = err.message;
       if (bulkTabMatchOptions) {
