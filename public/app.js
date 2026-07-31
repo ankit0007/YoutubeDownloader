@@ -20,6 +20,10 @@ const refreshAnalyticsBtn = document.getElementById("refresh-analytics-btn");
 const analyticsTable = document.getElementById("analytics-table");
 const loadQualityBtn = document.getElementById("load-quality-btn");
 const optionButtons = document.getElementById("option-buttons");
+const trimFields = document.getElementById("trim-fields");
+const trimStartInput = document.getElementById("trim-start-input");
+const trimEndInput = document.getElementById("trim-end-input");
+const trimHint = document.getElementById("trim-hint");
 const defaultLoadButtonText = loadQualityBtn.textContent;
 let openPreviewItemId = null;
 let queueRefreshTimer = null;
@@ -129,6 +133,11 @@ function closePreviewCard(card) {
   const thumbImg = card.querySelector(".thumb");
   const thumbOverlay = card.querySelector(".thumb-overlay");
   const previewBtn = card.querySelector(".preview-btn");
+  const trimPanel = card.querySelector(".post-trim-panel");
+  card.classList.remove("is-trim-editing");
+  if (trimPanel) {
+    trimPanel.remove();
+  }
   if (!previewHolder || previewHolder.classList.contains("hidden")) {
     return;
   }
@@ -199,6 +208,440 @@ async function addToQueue(url, payload) {
   return { item: data };
 }
 
+function getTrimPayload() {
+  const trimStart = trimStartInput ? String(trimStartInput.value || "").trim() : "";
+  const trimEnd = trimEndInput ? String(trimEndInput.value || "").trim() : "";
+  return { trimStart, trimEnd };
+}
+
+function setTrimEnabled(enabled, hintMessage) {
+  if (trimFields) {
+    trimFields.classList.toggle("is-disabled", !enabled);
+  }
+  if (trimStartInput) trimStartInput.disabled = !enabled;
+  if (trimEndInput) trimEndInput.disabled = !enabled;
+  if (!enabled) {
+    if (trimStartInput) trimStartInput.value = "";
+    if (trimEndInput) trimEndInput.value = "";
+  }
+  if (trimHint) {
+    trimHint.textContent =
+      hintMessage ||
+      (enabled
+        ? "Optional time trim (single video only). Leave blank for full length."
+        : "Playlist detected — trim disabled; all videos download full length.");
+  }
+}
+
+function formatDurationHint(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "";
+  const s = Math.round(seconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  if (h > 0) return `${h}:${pad(m)}:${pad(sec)}`;
+  return `${m}:${pad(sec)}`;
+}
+
+function trimMetaLabel(item) {
+  const start = item.trimStart || "";
+  const end = item.trimEnd || "";
+  if (!start && !end) return "";
+  const from = start || "0:00";
+  const to = end || "end";
+  return `Trim: ${from} → ${to}`;
+}
+
+function formatMediaTime(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+  const s = Math.floor(seconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  if (h > 0) return `${h}:${pad(m)}:${pad(sec)}`;
+  return `${m}:${pad(sec)}`;
+}
+
+function parseUiTimeToSeconds(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return null;
+  if (/^\d+(\.\d+)?$/.test(s)) {
+    const n = Number(s);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  }
+  const parts = s.split(":").map((p) => p.trim());
+  if (parts.length < 2 || parts.length > 3) return null;
+  if (!parts.every((p) => /^\d+(\.\d+)?$/.test(p))) return null;
+  const nums = parts.map(Number);
+  if (nums.some((n) => !Number.isFinite(n) || n < 0)) return null;
+  if (parts.length === 2) {
+    const [mm, ss] = nums;
+    if (ss >= 60) return null;
+    return mm * 60 + ss;
+  }
+  const [hh, mm, ss] = nums;
+  if (mm >= 60 || ss >= 60) return null;
+  return hh * 3600 + mm * 60 + ss;
+}
+
+async function applyPostDownloadTrim(itemId, startSec, endSec) {
+  const res = await authFetch(`/api/queue/${itemId}/trim`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      start: formatMediaTime(startSec),
+      end: formatMediaTime(endSec)
+    })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || "Trim failed");
+  }
+  return data;
+}
+
+/**
+ * Attach dual-handle trim scrubber under the thumbnail/preview area.
+ * Returns { focus } helper.
+ */
+function attachPostDownloadTrimPanel(wrapper, media, item) {
+  const existing = wrapper.querySelector(".post-trim-panel");
+  if (existing) existing.remove();
+
+  const MIN_GAP = 0.5;
+  let duration = 0;
+  let startSec = 0;
+  let endSec = 0;
+  let dragging = null; // "start" | "end"
+
+  const panel = document.createElement("div");
+  panel.className = "post-trim-panel";
+  panel.innerHTML = `
+    <div class="post-trim-header">
+      <div>
+        <div class="post-trim-title">Trim editor</div>
+        <div class="post-trim-subtitle">Drag the start / end markers, or type exact times</div>
+      </div>
+      <button type="button" class="post-trim-close-btn" aria-label="Close trim editor">Close</button>
+    </div>
+    <div class="post-trim-track" role="group" aria-label="Trim range">
+      <div class="post-trim-rail"></div>
+      <div class="post-trim-dim post-trim-dim-left"></div>
+      <div class="post-trim-dim post-trim-dim-right"></div>
+      <div class="post-trim-range"></div>
+      <button type="button" class="post-trim-handle post-trim-handle-start" aria-label="Trim start">
+        <span class="post-trim-handle-grip"></span>
+        <span class="post-trim-handle-time post-trim-handle-time-start">0:00</span>
+      </button>
+      <button type="button" class="post-trim-handle post-trim-handle-end" aria-label="Trim end">
+        <span class="post-trim-handle-grip"></span>
+        <span class="post-trim-handle-time post-trim-handle-time-end">0:00</span>
+      </button>
+    </div>
+    <div class="post-trim-times">
+      <label class="post-trim-field">
+        <span>Start</span>
+        <input type="text" class="post-trim-start-input" placeholder="0:00" />
+      </label>
+      <label class="post-trim-field">
+        <span>End</span>
+        <input type="text" class="post-trim-end-input" placeholder="0:00" />
+      </label>
+      <span class="post-trim-duration-label"></span>
+    </div>
+    <div class="post-trim-actions">
+      <button type="button" class="post-trim-apply-btn">Apply trim</button>
+      <button type="button" class="post-trim-preview-sel-btn">Play selection</button>
+      <span class="post-trim-status"></span>
+    </div>
+  `;
+
+  const thumbWrap = wrapper.querySelector(".thumb-wrap");
+  if (thumbWrap && thumbWrap.parentNode) {
+    thumbWrap.insertAdjacentElement("afterend", panel);
+  } else {
+    wrapper.appendChild(panel);
+  }
+
+  const track = panel.querySelector(".post-trim-track");
+  const rangeEl = panel.querySelector(".post-trim-range");
+  const dimLeft = panel.querySelector(".post-trim-dim-left");
+  const dimRight = panel.querySelector(".post-trim-dim-right");
+  const handleStart = panel.querySelector(".post-trim-handle-start");
+  const handleEnd = panel.querySelector(".post-trim-handle-end");
+  const handleStartTime = panel.querySelector(".post-trim-handle-time-start");
+  const handleEndTime = panel.querySelector(".post-trim-handle-time-end");
+  const startInput = panel.querySelector(".post-trim-start-input");
+  const endInput = panel.querySelector(".post-trim-end-input");
+  const durationLabel = panel.querySelector(".post-trim-duration-label");
+  const applyBtn = panel.querySelector(".post-trim-apply-btn");
+  const previewSelBtn = panel.querySelector(".post-trim-preview-sel-btn");
+  const closeBtn = panel.querySelector(".post-trim-close-btn");
+  const statusEl = panel.querySelector(".post-trim-status");
+
+  function clampRange(nextStart, nextEnd) {
+    let s = Math.max(0, Math.min(nextStart, duration));
+    let e = Math.max(0, Math.min(nextEnd, duration));
+    if (e - s < MIN_GAP) {
+      if (dragging === "start") {
+        s = Math.max(0, e - MIN_GAP);
+      } else if (dragging === "end") {
+        e = Math.min(duration, s + MIN_GAP);
+      } else {
+        e = Math.min(duration, s + MIN_GAP);
+      }
+    }
+    return { s, e };
+  }
+
+  function renderHandles() {
+    if (!duration || !Number.isFinite(duration)) return;
+    const leftPct = (startSec / duration) * 100;
+    const rightPct = (endSec / duration) * 100;
+    handleStart.style.left = `${leftPct}%`;
+    handleEnd.style.left = `${rightPct}%`;
+    rangeEl.style.left = `${leftPct}%`;
+    rangeEl.style.width = `${Math.max(0, rightPct - leftPct)}%`;
+    dimLeft.style.width = `${leftPct}%`;
+    dimRight.style.left = `${rightPct}%`;
+    dimRight.style.width = `${Math.max(0, 100 - rightPct)}%`;
+    const startLabel = formatMediaTime(startSec);
+    const endLabel = formatMediaTime(endSec);
+    handleStartTime.textContent = startLabel;
+    handleEndTime.textContent = endLabel;
+    startInput.value = startLabel;
+    endInput.value = endLabel;
+    const clipLen = Math.max(0, endSec - startSec);
+    durationLabel.textContent = `Selected ${formatMediaTime(clipLen)} · Total ${formatMediaTime(duration)}`;
+  }
+
+  function setFromRatio(ratio, which) {
+    if (!duration) return;
+    const t = Math.max(0, Math.min(1, ratio)) * duration;
+    if (which === "start") {
+      const clamped = clampRange(t, endSec);
+      startSec = clamped.s;
+      endSec = clamped.e;
+      try {
+        media.currentTime = startSec;
+      } catch (_e) {
+        /* ignore */
+      }
+    } else {
+      const clamped = clampRange(startSec, t);
+      startSec = clamped.s;
+      endSec = clamped.e;
+      try {
+        media.currentTime = endSec;
+      } catch (_e) {
+        /* ignore */
+      }
+    }
+    renderHandles();
+  }
+
+  function ratioFromClientX(clientX) {
+    const rect = track.getBoundingClientRect();
+    if (rect.width <= 0) return 0;
+    return (clientX - rect.left) / rect.width;
+  }
+
+  function onPointerMove(ev) {
+    if (!dragging) return;
+    setFromRatio(ratioFromClientX(ev.clientX), dragging);
+  }
+
+  function onPointerUp() {
+    dragging = null;
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", onPointerUp);
+  }
+
+  function startDrag(which, ev) {
+    ev.preventDefault();
+    dragging = which;
+    setFromRatio(ratioFromClientX(ev.clientX), which);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+  }
+
+  handleStart.addEventListener("pointerdown", (ev) => startDrag("start", ev));
+  handleEnd.addEventListener("pointerdown", (ev) => startDrag("end", ev));
+  track.addEventListener("pointerdown", (ev) => {
+    if (ev.target.closest(".post-trim-handle")) return;
+    const ratio = ratioFromClientX(ev.clientX);
+    const t = ratio * duration;
+    const distStart = Math.abs(t - startSec);
+    const distEnd = Math.abs(t - endSec);
+    startDrag(distStart <= distEnd ? "start" : "end", ev);
+  });
+
+  function syncFromInputs() {
+    const parsedStart = parseUiTimeToSeconds(startInput.value);
+    const parsedEnd = parseUiTimeToSeconds(endInput.value);
+    if (parsedStart === null || parsedEnd === null) {
+      statusEl.textContent = "Use MM:SS or HH:MM:SS";
+      renderHandles();
+      return;
+    }
+    dragging = null;
+    const clamped = clampRange(parsedStart, parsedEnd);
+    startSec = clamped.s;
+    endSec = clamped.e;
+    statusEl.textContent = "";
+    renderHandles();
+  }
+
+  startInput.addEventListener("change", syncFromInputs);
+  endInput.addEventListener("change", syncFromInputs);
+  startInput.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      syncFromInputs();
+    }
+  });
+  endInput.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      syncFromInputs();
+    }
+  });
+
+  let selectionWatch = null;
+  previewSelBtn.addEventListener("click", () => {
+    if (!duration) return;
+    syncFromInputs();
+    try {
+      media.currentTime = startSec;
+    } catch (_e) {
+      /* ignore */
+    }
+    media.play().catch(() => {});
+    if (selectionWatch) {
+      media.removeEventListener("timeupdate", selectionWatch);
+    }
+    selectionWatch = () => {
+      if (media.currentTime >= endSec - 0.05) {
+        media.pause();
+        media.removeEventListener("timeupdate", selectionWatch);
+        selectionWatch = null;
+      }
+    };
+    media.addEventListener("timeupdate", selectionWatch);
+  });
+
+  closeBtn.addEventListener("click", () => {
+    closePreviewCard(wrapper);
+    openPreviewItemId = null;
+  });
+
+  applyBtn.addEventListener("click", async () => {
+    if (!duration) {
+      statusEl.textContent = "Media not ready yet.";
+      return;
+    }
+    syncFromInputs();
+    if (endSec - startSec < MIN_GAP) {
+      statusEl.textContent = "Range too short.";
+      return;
+    }
+    applyBtn.disabled = true;
+    statusEl.textContent = "Trimming…";
+    try {
+      media.pause();
+      openPreviewItemId = null;
+      await applyPostDownloadTrim(item.id, startSec, endSec);
+      statusText.textContent = `Trim applied on #${item.id}`;
+      await refreshQueue(true);
+    } catch (err) {
+      statusEl.textContent = err.message || "Trim failed";
+      applyBtn.disabled = false;
+    }
+  });
+
+  function initDuration() {
+    const d = Number(media.duration);
+    if (!Number.isFinite(d) || d <= 0) return false;
+    duration = d;
+    startSec = 0;
+    endSec = d;
+    renderHandles();
+    return true;
+  }
+
+  if (!initDuration()) {
+    media.addEventListener(
+      "loadedmetadata",
+      () => {
+        initDuration();
+      },
+      { once: true }
+    );
+  }
+
+  return {
+    focus() {
+      panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      startInput.focus();
+    }
+  };
+}
+
+function openItemPreview(wrapper, item, options = {}) {
+  const previewHolder = wrapper.querySelector(".preview-holder");
+  const previewBtn = wrapper.querySelector(".preview-btn");
+  const thumbImg = wrapper.querySelector(".thumb");
+  const thumbOverlay = wrapper.querySelector(".thumb-overlay");
+  if (!previewHolder || !previewBtn) return;
+
+  const isAudio = item.downloadType === "mp3";
+  const thumb = item.thumbnailUrl || "https://placehold.co/640x360/101a33/c8d5ff?text=No+Thumbnail";
+  const trimWorkspace = Boolean(options.trimWorkspace || options.focusTrim);
+
+  document.querySelectorAll(".queue-item.is-trim-editing").forEach((el) => {
+    if (el !== wrapper) el.classList.remove("is-trim-editing");
+  });
+  wrapper.classList.toggle("is-trim-editing", trimWorkspace);
+
+  if (isAudio) {
+    previewHolder.innerHTML = `
+      <div class="audio-preview">
+        <div class="audio-title">Audio Preview</div>
+        <audio controls preload="metadata" src="${item.downloadUrl}"></audio>
+      </div>
+    `;
+  } else {
+    previewHolder.innerHTML = `
+      <video controls preload="metadata" src="${item.downloadUrl}" poster="${thumb}"></video>
+    `;
+  }
+
+  previewHolder.classList.remove("hidden");
+  if (thumbImg) thumbImg.classList.add("hidden");
+  if (thumbOverlay) thumbOverlay.classList.add("hidden");
+  previewBtn.textContent = "Hide Preview";
+  openPreviewItemId = item.id;
+  closeAllOtherPreviews(wrapper);
+
+  const media = previewHolder.querySelector("video, audio");
+  let trimApi = null;
+  if (media) {
+    media.addEventListener("play", () => closeAllOtherPreviews(wrapper));
+    trimApi = attachPostDownloadTrimPanel(wrapper, media, item);
+    if (!options.skipAutoplay) {
+      media.play().catch(() => {});
+    }
+  }
+  if (trimWorkspace) {
+    wrapper.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+  if (options.focusTrim && trimApi) {
+    trimApi.focus();
+  }
+}
+
 function renderOptionButtons(url, data) {
   optionButtons.innerHTML = "";
 
@@ -214,7 +657,8 @@ function renderOptionButtons(url, data) {
         statusText.textContent = `Adding video (${quality.label}) to queue...`;
         const out = await addToQueue(url, {
           downloadType: "video",
-          qualityPreference: quality.value
+          qualityPreference: quality.value,
+          ...getTrimPayload()
         });
         if (out.batch) {
           const n = out.batch.queued.length;
@@ -224,7 +668,8 @@ function renderOptionButtons(url, data) {
               ? `Playlist: queued ${n} video(s), ${e} skipped (e.g. already in queue).`
               : `Playlist: queued ${n} video(s) at ${quality.label}.`;
         } else if (out.item) {
-          statusText.textContent = `Added #${out.item.id} video ${quality.label}`;
+          const trimNote = trimMetaLabel(out.item);
+          statusText.textContent = `Added #${out.item.id} video ${quality.label}${trimNote ? ` (${trimNote})` : ""}`;
         }
         await refreshQueue(true);
       } catch (err) {
@@ -243,7 +688,8 @@ function renderOptionButtons(url, data) {
       statusText.textContent = "Adding MP3 to queue...";
       const out = await addToQueue(url, {
         downloadType: "mp3",
-        qualityPreference: "best"
+        qualityPreference: "best",
+        ...getTrimPayload()
       });
       if (out.batch) {
         const n = out.batch.queued.length;
@@ -253,7 +699,8 @@ function renderOptionButtons(url, data) {
             ? `Playlist: queued ${n} MP3 job(s), ${e} skipped.`
             : `Playlist: queued ${n} MP3 download(s).`;
       } else if (out.item) {
-        statusText.textContent = `Added #${out.item.id} MP3`;
+        const trimNote = trimMetaLabel(out.item);
+        statusText.textContent = `Added #${out.item.id} MP3${trimNote ? ` (${trimNote})` : ""}`;
       }
       await refreshQueue(true);
     } catch (err) {
@@ -308,6 +755,8 @@ function statusLabel(status) {
       return "Queued";
     case "downloading":
       return "Downloading";
+    case "trimming":
+      return "Trimming";
     case "completed":
       return "Completed";
     case "cancelled":
@@ -442,7 +891,9 @@ function updateToolbar() {
 
 function createQueueItem(item) {
   const wrapper = document.createElement("article");
-  wrapper.className = `queue-item ${item.status === "completed" ? "is-complete" : "is-active"}`;
+  wrapper.className = `queue-item ${
+    item.status === "completed" ? "is-complete" : item.status === "trimming" ? "is-active is-trimming" : "is-active"
+  }`;
 
   const qid = normalizeQueueId(item.id);
 
@@ -469,6 +920,11 @@ function createQueueItem(item) {
         <div class="meta">${item.message}</div>
         <div class="meta">Quality: ${item.qualityPreference === "best" ? "Auto (Best)" : `${item.qualityPreference}p`}</div>
         <div class="meta">Type: ${item.downloadType || "video"}</div>
+        ${
+          trimMetaLabel(item)
+            ? `<div class="meta">${trimMetaLabel(item)}</div>`
+            : ""
+        }
       </div>
     </div>
     <div class="progress-wrapper">
@@ -501,7 +957,7 @@ function createQueueItem(item) {
   const thumbImg = wrapper.querySelector(".thumb");
   const thumbOverlay = wrapper.querySelector(".thumb-overlay");
 
-  if (item.status !== "downloading") {
+  if (item.status !== "downloading" && item.status !== "trimming" && item.status !== "merging") {
     const removeBtn = document.createElement("button");
     removeBtn.className = "btn btn-remove";
     removeBtn.innerHTML = "<span class=\"btn-icon\">🗑</span><span>Remove</span>";
@@ -554,6 +1010,25 @@ function createQueueItem(item) {
     link.innerHTML = "<span class=\"btn-icon\">⬇</span><span>Download Only</span>";
     link.download = item.filename || "";
     actions.appendChild(link);
+
+    const trimBtn = document.createElement("button");
+    trimBtn.type = "button";
+    trimBtn.className = "btn btn-trim";
+    trimBtn.innerHTML = "<span class=\"btn-icon\">✂</span><span>Trim</span>";
+    trimBtn.onclick = () => {
+      const showingPreview = previewHolder && !previewHolder.classList.contains("hidden");
+      const panel = wrapper.querySelector(".post-trim-panel");
+      if (!showingPreview || !wrapper.classList.contains("is-trim-editing")) {
+        openItemPreview(wrapper, item, { focusTrim: true, skipAutoplay: true, trimWorkspace: true });
+      } else if (panel) {
+        panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        const startIn = panel.querySelector(".post-trim-start-input");
+        if (startIn) startIn.focus();
+      } else {
+        openItemPreview(wrapper, item, { focusTrim: true, skipAutoplay: true, trimWorkspace: true });
+      }
+    };
+    actions.appendChild(trimBtn);
   }
 
   if (previewBtn && previewHolder) {
@@ -565,31 +1040,7 @@ function createQueueItem(item) {
         openPreviewItemId = null;
         return;
       }
-
-      if (isAudio) {
-        previewHolder.innerHTML = `
-          <div class="audio-preview">
-            <div class="audio-title">Audio Preview</div>
-            <audio controls preload="metadata" src="${item.downloadUrl}"></audio>
-          </div>
-        `;
-      } else {
-        previewHolder.innerHTML = `
-          <video controls preload="metadata" src="${item.downloadUrl}" poster="${thumb}"></video>
-        `;
-      }
-
-      previewHolder.classList.remove("hidden");
-      thumbImg.classList.add("hidden");
-      thumbOverlay.classList.add("hidden");
-      previewBtn.textContent = "Hide Preview";
-      openPreviewItemId = item.id;
-      closeAllOtherPreviews(wrapper);
-      const media = previewHolder.querySelector("video, audio");
-      if (media) {
-        media.addEventListener("play", () => closeAllOtherPreviews(wrapper));
-        media.play().catch(() => {});
-      }
+      openItemPreview(wrapper, item);
     };
   }
 
@@ -646,17 +1097,26 @@ if (loadQualityBtn) {
     loadQualityBtn.classList.add("is-loading");
     try {
       const data = await fetchQualities(url);
+      const isPlaylist = typeof data.playlistVideoCount === "number" && data.playlistVideoCount > 1;
+      setTrimEnabled(
+        !isPlaylist,
+        isPlaylist
+          ? `Playlist of ${data.playlistVideoCount} videos — trim disabled; full length only.`
+          : data.duration
+            ? `Optional time trim (length ~${formatDurationHint(data.duration)}). Leave blank for full length.`
+            : "Optional time trim (single video only). Leave blank for full length."
+      );
       renderOptionButtons(url, data);
-      const pl =
-        typeof data.playlistVideoCount === "number" && data.playlistVideoCount > 1
-          ? ` Playlist: ${data.playlistVideoCount} videos will be queued when you pick a format.`
-          : "";
+      const pl = isPlaylist
+        ? ` Playlist: ${data.playlistVideoCount} videos will be queued when you pick a format.`
+        : "";
       statusText.textContent = data.title
         ? `Options loaded for: ${data.title}.${pl} Click any button to queue.`
         : `Options loaded.${pl} Click any button to queue.`;
     } catch (err) {
       statusText.textContent = err.message;
       optionButtons.innerHTML = "";
+      setTrimEnabled(true);
     } finally {
       loadQualityBtn.disabled = false;
       loadQualityBtn.textContent = defaultLoadButtonText;

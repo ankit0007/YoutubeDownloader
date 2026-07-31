@@ -297,6 +297,47 @@ p {
   filter: brightness(1.1);
 }
 
+.trim-fields {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.trim-fields.is-disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.trim-hint {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  color: rgba(15, 23, 42, 0.7);
+}
+
+.trim-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.trim-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.trim-input {
+  width: 5.5rem;
+  padding: 8px 10px;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #0f172a;
+}
+
 .secondary-btn {
   background: linear-gradient(135deg, #e2e8f0, #cbd5e1);
   color: #0f172a;
@@ -668,9 +709,375 @@ p {
   text-decoration: none;
 }
 
+.btn-trim {
+  background: linear-gradient(135deg, #c7d7ff, #9eb6f5);
+  color: #1e3a8a;
+}
+
 .btn-cancel {
   background: linear-gradient(135deg, #ffb8b8, #e88181);
   color: #7a0c0c;
+}
+
+/* Immersive full-width trim workspace */
+.queue-item.is-trim-editing {
+  grid-column: 1 / -1;
+  border-color: rgba(37, 99, 235, 0.35);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
+  background: #0b1220;
+  color: #e2e8f0;
+}
+
+.queue-item.is-trim-editing .card-body,
+.queue-item.is-trim-editing .title {
+  color: #e2e8f0;
+}
+
+.queue-item.is-trim-editing .meta {
+  color: #94a3b8;
+}
+
+.queue-item.is-trim-editing .thumb-wrap {
+  aspect-ratio: auto;
+  min-height: min(58vh, 560px);
+  max-height: 70vh;
+  background: #000;
+}
+
+.queue-item.is-trim-editing .preview-holder {
+  background: #000;
+}
+
+.queue-item.is-trim-editing .preview-holder video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.queue-item.is-trim-editing .audio-preview {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.queue-item.is-trim-editing .progress-wrapper {
+  display: none;
+}
+
+.queue-item.is-trim-editing .actions {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.post-trim-panel {
+  margin: 0;
+  padding: 16px 18px 18px;
+  border: 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 0;
+  background: linear-gradient(180deg, #111827 0%, #0f172a 100%);
+  color: #e2e8f0;
+}
+
+.queue-item:not(.is-trim-editing) .post-trim-panel {
+  margin: 0 10px 10px;
+  padding: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 10px;
+  background: rgba(248, 250, 252, 0.95);
+  color: #0f172a;
+}
+
+.post-trim-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.post-trim-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  margin: 0 0 2px;
+  color: inherit;
+}
+
+.post-trim-subtitle {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.post-trim-close-btn {
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.post-trim-close-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.queue-item:not(.is-trim-editing) .post-trim-close-btn {
+  border-color: rgba(15, 23, 42, 0.14);
+  background: #fff;
+  color: #0f172a;
+}
+
+.post-trim-track {
+  position: relative;
+  height: 56px;
+  margin: 8px 0 16px;
+  padding: 0 10px;
+  touch-action: none;
+  user-select: none;
+  cursor: pointer;
+}
+
+.queue-item.is-trim-editing .post-trim-track {
+  height: 72px;
+  margin: 10px 0 18px;
+}
+
+.post-trim-rail {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 50%;
+  height: 18px;
+  margin-top: -9px;
+  border-radius: 6px;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(148, 163, 184, 0.22) 0 1px,
+      transparent 1px 28px
+    ),
+    rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.2);
+}
+
+.queue-item:not(.is-trim-editing) .post-trim-rail {
+  background: rgba(15, 23, 42, 0.12);
+  box-shadow: none;
+  height: 10px;
+  margin-top: -5px;
+}
+
+.post-trim-dim {
+  position: absolute;
+  top: 50%;
+  height: 18px;
+  margin-top: -9px;
+  background: rgba(2, 6, 23, 0.55);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.queue-item:not(.is-trim-editing) .post-trim-dim {
+  height: 10px;
+  margin-top: -5px;
+  background: rgba(15, 23, 42, 0.28);
+}
+
+.post-trim-dim-left {
+  left: 10px;
+  border-radius: 6px 0 0 6px;
+}
+
+.post-trim-dim-right {
+  border-radius: 0 6px 6px 0;
+}
+
+.post-trim-range {
+  position: absolute;
+  top: 50%;
+  height: 18px;
+  margin-top: -9px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #38bdf8, #3b82f6 45%, #6366f1);
+  box-shadow: 0 0 0 1px rgba(147, 197, 253, 0.45), 0 0 18px rgba(59, 130, 246, 0.35);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.queue-item:not(.is-trim-editing) .post-trim-range {
+  height: 10px;
+  margin-top: -5px;
+  box-shadow: none;
+  background: linear-gradient(90deg, #3b82f6, #2563eb);
+}
+
+.post-trim-handle {
+  position: absolute;
+  top: 50%;
+  width: 18px;
+  height: 44px;
+  margin-left: -9px;
+  margin-top: -22px;
+  border: 0;
+  border-radius: 6px;
+  background: #f8fafc;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  padding: 0;
+  cursor: grab;
+  z-index: 3;
+}
+
+.queue-item.is-trim-editing .post-trim-handle {
+  width: 22px;
+  height: 56px;
+  margin-left: -11px;
+  margin-top: -28px;
+  border-radius: 8px;
+}
+
+.post-trim-handle:active {
+  cursor: grabbing;
+}
+
+.post-trim-handle-start {
+  background: linear-gradient(180deg, #e0f2fe, #7dd3fc);
+}
+
+.post-trim-handle-end {
+  background: linear-gradient(180deg, #ddd6fe, #a5b4fc);
+}
+
+.post-trim-handle-grip {
+  display: block;
+  width: 3px;
+  height: 18px;
+  margin: 12px auto 0;
+  border-radius: 2px;
+  background: rgba(15, 23, 42, 0.35);
+  box-shadow: 4px 0 0 rgba(15, 23, 42, 0.35), -4px 0 0 rgba(15, 23, 42, 0.35);
+}
+
+.queue-item.is-trim-editing .post-trim-handle-grip {
+  margin-top: 16px;
+  height: 22px;
+}
+
+.post-trim-handle-time {
+  position: absolute;
+  top: -22px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 700;
+  color: #e2e8f0;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 999px;
+  padding: 2px 7px;
+  pointer-events: none;
+}
+
+.queue-item:not(.is-trim-editing) .post-trim-handle-time {
+  color: #0f172a;
+  background: #fff;
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+.post-trim-times {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.post-trim-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: inherit;
+}
+
+.post-trim-field input {
+  width: 6.5rem;
+  padding: 9px 11px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-item:not(.is-trim-editing) .post-trim-field input {
+  background: #fff;
+  color: #0f172a;
+  border-color: rgba(15, 23, 42, 0.14);
+}
+
+.post-trim-duration-label {
+  font-size: 13px;
+  opacity: 0.8;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.post-trim-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.post-trim-apply-btn,
+.post-trim-preview-sel-btn {
+  border: 0;
+  border-radius: 10px;
+  padding: 11px 18px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.post-trim-apply-btn {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: #fff;
+  min-width: 140px;
+}
+
+.post-trim-apply-btn:hover {
+  filter: brightness(1.08);
+}
+
+.post-trim-preview-sel-btn {
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.queue-item:not(.is-trim-editing) .post-trim-preview-sel-btn {
+  background: #fff;
+  color: #0f172a;
+  border-color: rgba(15, 23, 42, 0.14);
+}
+
+.post-trim-preview-sel-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.post-trim-status {
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.queue-item.is-trimming .meta {
+  color: #93c5fd;
 }
 
 .btn-icon {

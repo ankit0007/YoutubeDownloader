@@ -51,6 +51,49 @@ npm start
 
 (On Unix: `PORT=4000 npm start`.)
 
+## Desktop app (Windows)
+
+Same UI as the web app, inside an Electron window. Downloads and `queue.db` are stored under the app userData folder when running as desktop/MSI (`%APPDATA%\YouTube Downloader Pro\`).
+
+### Run desktop (dev)
+
+```bash
+npm install
+npm run electron
+```
+
+### Build MSI installer
+
+```bash
+npm run dist:msi
+```
+
+On Windows PowerShell, if code-signing tools complain about symlinks, run:
+
+```powershell
+$env:CSC_IDENTITY_AUTO_DISCOVERY='false'
+npm run dist:msi
+```
+
+Output (examples):
+
+```text
+dist/YouTube Downloader Pro-1.0.0-Setup.msi
+dist/YouTube Downloader Pro-1.0.0-Setup.exe
+```
+
+- **`.msi`** — Windows Installer package  
+- **`.exe`** — NSIS setup (same app; useful if MSI is blocked by policy)
+
+Install, then launch **YouTube Downloader Pro** from the Start Menu or desktop shortcut.
+
+Notes:
+
+- First build may take several minutes (Electron + WiX/NSIS downloads).
+- Web mode still works with `npm start` in a browser.
+- Optional: replace `build/icon.ico` (include a 256×256 size) to customize the app icon.
+- Stop any running instance of the app before building (native `sqlite3` rebuild needs an unlocked binary).
+
 ## Usage
 
 1. **One video:** **One link** tab → paste URL → **Load Options** → choose a quality or MP3.

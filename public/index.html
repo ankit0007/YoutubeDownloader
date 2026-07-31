@@ -81,6 +81,15 @@
             />
             <button id="load-quality-btn" type="button" class="secondary-btn">Load Options</button>
           </form>
+          <div id="trim-fields" class="trim-fields">
+            <p class="trim-hint" id="trim-hint">Optional time trim (single video only). Leave blank for full length.</p>
+            <div class="trim-row">
+              <label class="trim-label" for="trim-start-input">Start</label>
+              <input id="trim-start-input" class="trim-input" type="text" placeholder="0:00" autocomplete="off" />
+              <label class="trim-label" for="trim-end-input">End</label>
+              <input id="trim-end-input" class="trim-input" type="text" placeholder="3:30" autocomplete="off" />
+            </div>
+          </div>
           <div id="option-buttons" class="option-buttons"></div>
         </div>
 
