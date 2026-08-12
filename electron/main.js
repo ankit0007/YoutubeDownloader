@@ -1,6 +1,12 @@
 const path = require("path");
 const fs = require("fs");
-const { app, BrowserWindow, shell } = require("electron");
+const { app, BrowserWindow, Menu, shell, nativeImage } = require("electron");
+
+// Without this, Windows often keeps showing the default Electron icon
+// on the taskbar / jumplist even when the .exe resources are correct.
+if (process.platform === "win32") {
+  app.setAppUserModelId("com.youtubedownloader.pro");
+}
 
 // Writable downloads + SQLite outside Program Files / asar
 process.env.YD_DATA_DIR = process.env.YD_DATA_DIR || app.getPath("userData");
@@ -40,8 +46,24 @@ if (!gotLock) {
     }
   });
 
+  function resolveAppIconImage() {
+    const candidates = [
+      path.join(process.resourcesPath || "", "icon.png"),
+      path.join(process.resourcesPath || "", "icon.ico"),
+      path.join(__dirname, "..", "build", "icon.png"),
+      path.join(__dirname, "..", "build", "icon.ico"),
+      path.join(__dirname, "..", "public", "logo.png")
+    ];
+    for (const candidate of candidates) {
+      if (!candidate || !fs.existsSync(candidate)) continue;
+      const image = nativeImage.createFromPath(candidate);
+      if (!image.isEmpty()) return image;
+    }
+    return null;
+  }
+
   function createWindow(port) {
-    const iconPath = path.join(__dirname, "..", "build", "icon.ico");
+    const iconImage = resolveAppIconImage();
     const windowOpts = {
       width: 1280,
       height: 840,
@@ -49,16 +71,20 @@ if (!gotLock) {
       minHeight: 600,
       title: "YouTube Downloader Pro",
       show: false,
+      autoHideMenuBar: true,
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
         sandbox: true
       }
     };
-    if (fs.existsSync(iconPath)) {
-      windowOpts.icon = iconPath;
+    if (iconImage) {
+      windowOpts.icon = iconImage;
     }
     mainWindow = new BrowserWindow(windowOpts);
+    if (iconImage) {
+      mainWindow.setIcon(iconImage);
+    }
 
     mainWindow.once("ready-to-show", () => {
       mainWindow.show();
@@ -87,6 +113,9 @@ if (!gotLock) {
   }
 
   app.whenReady().then(() => {
+    // Hide Electron's default File/Edit/View menu so the window looks native.
+    Menu.setApplicationMenu(null);
+
     boot().catch((err) => {
       console.error("Failed to start desktop app:", err);
       app.quit();

@@ -1,6 +1,6 @@
 {
   "name": "youtube-downloader-queue-app",
-  "version": "1.0.0",
+  "version": "1.0.4",
   "description": "Browser based YouTube downloader with queue support.",
   "main": "electron/main.js",
   "scripts": {
@@ -30,7 +30,8 @@
     "electron": "^35.2.1",
     "electron-builder": "^26.0.12",
     "jimp": "^0.22.12",
-    "png-to-ico": "^3.0.2"
+    "png-to-ico": "^3.0.2",
+    "rcedit": "^5.0.2"
   },
   "build": {
     "appId": "com.youtubedownloader.pro",
@@ -40,6 +41,7 @@
       "output": "dist",
       "buildResources": "build"
     },
+    "afterPack": "./scripts/afterPack.js",
     "files": [
       "electron/**/*",
       "server.js",
@@ -76,6 +78,22 @@
       "signAndEditExecutable": false,
       "forceCodeSigning": false
     },
+    "extraResources": [
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
+      },
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      }
+    ],
+    "extraFiles": [
+      {
+        "from": "build/icon.ico",
+        "to": "app-icon.ico"
+      }
+    ],
     "msi": {
       "oneClick": false,
       "perMachine": false,
@@ -88,7 +106,11 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "YouTube Downloader Pro"
+      "shortcutName": "YouTube Downloader Pro",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "include": "build/installer.nsh"
     }
   }
 }

@@ -10,20 +10,29 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Syne:wght@600;700;800&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
-    <div class="page-glow" aria-hidden="true"></div>
+    <div id="top-loader" class="top-loader" aria-hidden="true">
+      <span class="top-loader-bar"></span>
+    </div>
+    <div class="stage-bg" aria-hidden="true">
+      <span class="orb orb-a"></span>
+      <span class="orb orb-b"></span>
+      <span class="orb orb-c"></span>
+      <span class="grid-fade"></span>
+    </div>
+
     <main class="container">
       <section id="login-card" class="auth-card hidden">
         <div class="auth-header">
-          <img class="auth-logo" src="/logo.png" alt="YouTube Downloader Pro" width="72" height="72" />
+          <img class="auth-logo" src="/logo.png" alt="YouTube Downloader Pro" width="80" height="80" />
           <div class="auth-badge">YouTube Downloader Pro</div>
-          <h2>Account Access</h2>
-          <p class="auth-subtitle">Continue with your account when guest free limit is reached.</p>
+          <h2>Welcome back</h2>
+          <p class="auth-subtitle">Sign in when guest free limit is reached — your queue stays with you.</p>
         </div>
         <div class="auth-toggle" role="tablist" aria-label="Authentication forms">
           <button type="button" id="show-login-btn" class="auth-switch-btn is-active">Login</button>
@@ -56,103 +65,116 @@
           </div>
 
           <div class="brand-hero">
-            <img class="brand-logo" src="/logo.png" alt="" width="88" height="88" />
-            <div class="brand-copy">
-              <p class="brand-kicker">Download · Queue · Trim</p>
-              <h1>YouTube Downloader Pro</h1>
-              <p class="brand-tagline">
-                Queue videos with quality control. Paste one link, many links, or a whole playlist — all videos get
-                queued.
-              </p>
+            <div class="brand-mark">
+              <img class="brand-logo" src="/logo.png" alt="" width="108" height="108" />
+              <span class="brand-ring" aria-hidden="true"></span>
             </div>
-          </div>
-
-          <div class="tabs-nav" role="tablist" aria-label="Add to queue">
-            <button
-              type="button"
-              class="tab-btn is-active"
-              role="tab"
-              id="tab-btn-single"
-              aria-selected="true"
-              aria-controls="panel-single"
-              data-tab="single"
-            >
-              One link
-            </button>
-            <button
-              type="button"
-              class="tab-btn"
-              role="tab"
-              id="tab-btn-bulk"
-              aria-selected="false"
-              aria-controls="panel-bulk"
-              data-tab="bulk"
-            >
-              Multiple URLs
-            </button>
-          </div>
-
-          <div id="panel-single" class="tab-panel is-active" role="tabpanel" aria-labelledby="tab-btn-single">
-            <form id="queue-form" class="queue-form">
-              <input
-                id="url-input"
-                type="url"
-                placeholder="Video or full playlist URL: https://www.youtube.com/watch?v=... or .../playlist?list=..."
-                required
-              />
-              <button id="load-quality-btn" type="button" class="secondary-btn">Load Options</button>
-            </form>
-            <div id="trim-fields" class="trim-fields">
-              <p class="trim-hint" id="trim-hint">Optional time trim (single video only). Leave blank for full length.</p>
-              <div class="trim-row">
-                <label class="trim-label" for="trim-start-input">Start</label>
-                <input id="trim-start-input" class="trim-input" type="text" placeholder="0:00" autocomplete="off" />
-                <label class="trim-label" for="trim-end-input">End</label>
-                <input id="trim-end-input" class="trim-input" type="text" placeholder="3:30" autocomplete="off" />
+            <div class="brand-copy">
+              <p class="brand-kicker">Queue · Quality · Trim</p>
+              <h1>YouTube<br />Downloader <span class="accent">Pro</span></h1>
+              <p class="brand-tagline">
+                Paste a video, a stack of links, or an entire playlist — watch every job move with live progress.
+              </p>
+              <div class="feature-row" aria-hidden="true">
+                <span class="feature-pill">Playlist expand</span>
+                <span class="feature-pill">Best quality</span>
+                <span class="feature-pill">Visual trim</span>
+                <span class="feature-pill">MP3 extract</span>
               </div>
             </div>
-            <div id="option-buttons" class="option-buttons"></div>
           </div>
 
-          <div id="panel-bulk" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-bulk" hidden>
-            <p class="tab-hint">
-              One link per line — each can be a single video or a playlist / channel URL; every video from that list is
-              queued.
-            </p>
-            <label for="bulk-urls-input" class="bulk-label">Multiple URLs (one per line)</label>
-            <textarea
-              id="bulk-urls-input"
-              class="bulk-urls-input"
-              rows="5"
-              placeholder="https://www.youtube.com/watch?v=...&#10;https://www.youtube.com/playlist?list=..."
-            ></textarea>
-            <div class="bulk-tab-top-actions">
-              <button type="button" id="bulk-load-quality-btn" class="secondary-btn">
-                Load quality options (first URL in list)
+          <div class="composer">
+            <div class="tabs-nav" role="tablist" aria-label="Add to queue">
+              <button
+                type="button"
+                class="tab-btn is-active"
+                role="tab"
+                id="tab-btn-single"
+                aria-selected="true"
+                aria-controls="panel-single"
+                data-tab="single"
+              >
+                One link
+              </button>
+              <button
+                type="button"
+                class="tab-btn"
+                role="tab"
+                id="tab-btn-bulk"
+                aria-selected="false"
+                aria-controls="panel-bulk"
+                data-tab="bulk"
+              >
+                Multiple URLs
               </button>
             </div>
-            <div
-              id="bulk-tab-match-options"
-              class="option-buttons bulk-match-options hidden"
-              aria-live="polite"
-            ></div>
-            <div class="bulk-add-actions">
-              <button type="button" id="bulk-queue-video-btn" class="secondary-btn bulk-queue-btn">
-                Queue all · Video (best)
-              </button>
-              <button type="button" id="bulk-queue-mp3-btn" class="secondary-btn bulk-queue-btn bulk-mp3-btn">
-                Queue all · MP3
-              </button>
-            </div>
-          </div>
 
-          <p id="status-text" class="status-text"></p>
+            <div id="panel-single" class="tab-panel is-active" role="tabpanel" aria-labelledby="tab-btn-single">
+              <form id="queue-form" class="queue-form">
+                <input
+                  id="url-input"
+                  type="url"
+                  placeholder="Video or playlist URL — https://youtube.com/…"
+                  required
+                />
+                <button id="load-quality-btn" type="button" class="secondary-btn">Load Options</button>
+              </form>
+              <div id="trim-fields" class="trim-fields">
+                <p class="trim-hint" id="trim-hint">Optional time trim (single video only). Leave blank for full length.</p>
+                <div class="trim-row">
+                  <label class="trim-label" for="trim-start-input">Start</label>
+                  <input id="trim-start-input" class="trim-input" type="text" placeholder="0:00" autocomplete="off" />
+                  <label class="trim-label" for="trim-end-input">End</label>
+                  <input id="trim-end-input" class="trim-input" type="text" placeholder="3:30" autocomplete="off" />
+                </div>
+              </div>
+              <div id="option-buttons" class="option-buttons"></div>
+            </div>
+
+            <div id="panel-bulk" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-bulk" hidden>
+              <p class="tab-hint">
+                One link per line — each can be a single video or a playlist / channel URL; every video from that list is
+                queued.
+              </p>
+              <label for="bulk-urls-input" class="bulk-label">Multiple URLs (one per line)</label>
+              <textarea
+                id="bulk-urls-input"
+                class="bulk-urls-input"
+                rows="5"
+                placeholder="https://www.youtube.com/watch?v=...&#10;https://www.youtube.com/playlist?list=..."
+              ></textarea>
+              <div class="bulk-tab-top-actions">
+                <button type="button" id="bulk-load-quality-btn" class="secondary-btn">
+                  Load quality options (first URL in list)
+                </button>
+              </div>
+              <div
+                id="bulk-tab-match-options"
+                class="option-buttons bulk-match-options hidden"
+                aria-live="polite"
+              ></div>
+              <div class="bulk-add-actions">
+                <button type="button" id="bulk-queue-video-btn" class="secondary-btn bulk-queue-btn">
+                  Queue all · Video (best)
+                </button>
+                <button type="button" id="bulk-queue-mp3-btn" class="secondary-btn bulk-queue-btn bulk-mp3-btn">
+                  Queue all · MP3
+                </button>
+              </div>
+            </div>
+
+            <p id="status-text" class="status-text"></p>
+          </div>
         </section>
 
         <section class="queue-section">
           <div class="section-heading">
-            <h2>Download Queue</h2>
-            <span class="section-chip">Live progress</span>
+            <div>
+              <p class="section-eyebrow">Your workspace</p>
+              <h2>Download Queue</h2>
+            </div>
+            <span class="section-chip"><span class="chip-dot"></span> Live progress</span>
           </div>
           <div class="queue-toolbar" id="queue-toolbar">
             <label class="toolbar-select-all">
@@ -174,7 +196,10 @@
 
         <section id="analytics-section" class="queue-section hidden">
           <div class="section-heading">
-            <h2>Analytics</h2>
+            <div>
+              <p class="section-eyebrow">Insights</p>
+              <h2>Analytics</h2>
+            </div>
             <span class="section-chip">Dashboard</span>
           </div>
           <p class="tab-hint">Your dashboard always visible. Admin sees all users and full activity.</p>

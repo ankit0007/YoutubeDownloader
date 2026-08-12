@@ -1731,7 +1731,7 @@ app.post("/api/queue/:id/action", async (req, res) => {
   );
   if (!item) return res.status(404).json({ error: "Queue item not found." });
 
-  if (!["pause", "resume", "cancel"].includes(action)) {
+  if (!["pause", "resume", "cancel", "retry"].includes(action)) {
     return res.status(400).json({ error: "Invalid action." });
   }
 
@@ -1752,6 +1752,23 @@ app.post("/api/queue/:id/action", async (req, res) => {
     item.status = "cancelled";
     item.message = "Cancelled by user";
     await persistItem(item);
+    return res.json(item);
+  }
+
+  if (action === "retry") {
+    if (!["failed", "cancelled"].includes(item.status)) {
+      return res.status(400).json({ error: "Only failed or cancelled items can be retried." });
+    }
+    if (activeTasks.has(id) || trimmingJobs.has(id)) {
+      return res.status(409).json({ error: "This item is already being processed." });
+    }
+    item.status = "queued";
+    item.progress = 0;
+    item.message = "Retry queued";
+    item.filename = "";
+    item.downloadUrl = "";
+    await persistItem(item);
+    scheduleQueueProcessing();
     return res.json(item);
   }
 

@@ -24,9 +24,60 @@ const trimFields = document.getElementById("trim-fields");
 const trimStartInput = document.getElementById("trim-start-input");
 const trimEndInput = document.getElementById("trim-end-input");
 const trimHint = document.getElementById("trim-hint");
-const defaultLoadButtonText = loadQualityBtn.textContent;
+const defaultLoadButtonText = loadQualityBtn ? loadQualityBtn.textContent : "Load Options";
+const topLoader = document.getElementById("top-loader");
 let openPreviewItemId = null;
 let queueRefreshTimer = null;
+const expandedQueueIds = new Set();
+let activeLoadCount = 0;
+
+function spinnerMarkup(label) {
+  return `<span class="ui-spinner" aria-hidden="true"></span><span>${label}</span>`;
+}
+
+function setTopLoading(on) {
+  if (!topLoader) return;
+  activeLoadCount = Math.max(0, activeLoadCount + (on ? 1 : -1));
+  topLoader.classList.toggle("is-active", activeLoadCount > 0);
+  topLoader.setAttribute("aria-hidden", activeLoadCount > 0 ? "false" : "true");
+}
+
+function setButtonLoading(btn, loading, idleText) {
+  if (!btn) return;
+  if (loading) {
+    btn.dataset.idleText = idleText || btn.textContent;
+    btn.disabled = true;
+    btn.classList.add("is-loading");
+    btn.innerHTML = spinnerMarkup("Loading…");
+  } else {
+    btn.disabled = false;
+    btn.classList.remove("is-loading");
+    btn.textContent = idleText || btn.dataset.idleText || defaultLoadButtonText;
+  }
+}
+
+function renderQueueSkeletons(count = 3) {
+  if (!queueList) return;
+  queueList.innerHTML = Array.from({ length: count }, () => `
+    <article class="queue-item queue-skeleton" aria-hidden="true">
+      <div class="qi-row">
+        <div class="thumb-wrap skeleton-block"></div>
+        <div class="qi-content">
+          <div class="skeleton-line w-80"></div>
+          <div class="skeleton-line w-50"></div>
+          <div class="skeleton-line w-65"></div>
+        </div>
+      </div>
+    </article>
+  `).join("");
+}
+
+function statusBadgeClass(status) {
+  if (status === "completed") return "badge-ok";
+  if (status === "failed" || status === "cancelled") return "badge-err";
+  if (status === "downloading" || status === "trimming" || status === "merging") return "badge-busy";
+  return "badge-wait";
+}
 
 const bulkTabMatchOptions = document.getElementById("bulk-tab-match-options");
 const bulkUrlsInput = document.getElementById("bulk-urls-input");
@@ -597,7 +648,7 @@ function openItemPreview(wrapper, item, options = {}) {
   if (!previewHolder || !previewBtn) return;
 
   const isAudio = item.downloadType === "mp3";
-  const thumb = item.thumbnailUrl || "https://placehold.co/640x360/101a33/c8d5ff?text=No+Thumbnail";
+  const thumb = item.thumbnailUrl || "https://placehold.co/640x360/1a0c0c/e52d27?text=No+Thumbnail";
   const trimWorkspace = Boolean(options.trimWorkspace || options.focusTrim);
 
   document.querySelectorAll(".queue-item.is-trim-editing").forEach((el) => {
@@ -896,41 +947,59 @@ function createQueueItem(item) {
   }`;
 
   const qid = normalizeQueueId(item.id);
+  const isExpanded = qid != null && expandedQueueIds.has(qid);
+  if (isExpanded) wrapper.classList.add("is-expanded");
 
   const titleText = item.title || item.url;
-  const thumb = item.thumbnailUrl || "https://placehold.co/640x360/101a33/c8d5ff?text=No+Thumbnail";
+  const thumb = item.thumbnailUrl || "https://placehold.co/640x360/1a0c0c/e52d27?text=No+Thumbnail";
 
   const canPreview = item.status === "completed" && Boolean(item.downloadUrl);
   const isAudio = item.downloadType === "mp3";
+  const qualityText = item.qualityPreference === "best" ? "Auto (Best)" : `${item.qualityPreference}p`;
+  const typeText = item.downloadType || "video";
+  const trimText = trimMetaLabel(item);
+  const progress = item.progress || 0;
+  const busy = item.status === "downloading" || item.status === "trimming" || item.status === "merging";
 
   wrapper.innerHTML = `
-    <div class="thumb-wrap">
-      <label class="card-select-label" title="Select for bulk actions">
-        <input type="checkbox" class="queue-select-cb" data-item-id="${qid != null ? qid : ""}" ${qid == null ? "disabled" : ""} />
-      </label>
-      <img class="thumb" src="${thumb}" alt="${titleText}" loading="lazy" />
-      <div class="thumb-overlay">${item.progress || 0}%</div>
-      ${canPreview ? `<button class="preview-btn">${isAudio ? "Play Audio" : "Play Video"}</button>` : ""}
-      <div class="preview-holder hidden"></div>
-    </div>
-    <div class="card-body">
-      <div>
-        <div class="title">${titleText}</div>
-        <div class="meta">#${item.id} - ${statusLabel(item.status)}</div>
-        <div class="meta">${item.message}</div>
-        <div class="meta">Quality: ${item.qualityPreference === "best" ? "Auto (Best)" : `${item.qualityPreference}p`}</div>
-        <div class="meta">Type: ${item.downloadType || "video"}</div>
-        ${
-          trimMetaLabel(item)
-            ? `<div class="meta">${trimMetaLabel(item)}</div>`
-            : ""
-        }
+    <div class="qi-row">
+      <div class="thumb-wrap">
+        <label class="card-select-label" title="Select for bulk actions">
+          <input type="checkbox" class="queue-select-cb" data-item-id="${qid != null ? qid : ""}" ${qid == null ? "disabled" : ""} />
+        </label>
+        <img class="thumb" src="${thumb}" alt="${titleText}" loading="lazy" />
+        <div class="thumb-overlay">${progress}%</div>
+        ${canPreview ? `<button type="button" class="preview-btn">${isAudio ? "Play" : "Play"}</button>` : ""}
+        <div class="preview-holder hidden"></div>
+        ${busy ? `<div class="thumb-busy"><span class="ui-spinner ui-spinner-lg"></span></div>` : ""}
+      </div>
+      <div class="qi-content card-body">
+        <div class="qi-head">
+          <div class="title" title="${titleText}">${titleText}</div>
+          <span class="status-badge ${statusBadgeClass(item.status)}">${statusLabel(item.status)}</span>
+        </div>
+        <div class="qi-brief">
+          <span class="brief-chip">${typeText.toUpperCase()}</span>
+          <span class="brief-chip">${qualityText}</span>
+          <span class="brief-chip">#${item.id}</span>
+        </div>
+        <div class="progress-wrapper">
+          <div class="progress-bar ${busy ? "is-busy" : ""}" style="width:${progress}%"></div>
+        </div>
+        <div class="actions"></div>
+        <button type="button" class="more-toggle" aria-expanded="${isExpanded ? "true" : "false"}">
+          <span class="more-toggle-label">${isExpanded ? "Less" : "More"}</span>
+          <span class="more-chevron" aria-hidden="true"></span>
+        </button>
+        <div class="qi-more" ${isExpanded ? "" : "hidden"}>
+          <div class="meta">${item.message || "Waiting for updates…"}</div>
+          <div class="meta">Quality: ${qualityText}</div>
+          <div class="meta">Type: ${typeText}</div>
+          ${trimText ? `<div class="meta">${trimText}</div>` : ""}
+          <div class="meta">ID: #${item.id}</div>
+        </div>
       </div>
     </div>
-    <div class="progress-wrapper">
-      <div class="progress-bar" style="width:${item.progress || 0}%"></div>
-    </div>
-    <div class="actions"></div>
   `;
 
   const selectCb = wrapper.querySelector(".queue-select-cb");
@@ -951,6 +1020,22 @@ function createQueueItem(item) {
     });
   }
 
+  const moreBtn = wrapper.querySelector(".more-toggle");
+  const morePanel = wrapper.querySelector(".qi-more");
+  const moreLabel = wrapper.querySelector(".more-toggle-label");
+  if (moreBtn && morePanel) {
+    moreBtn.addEventListener("click", () => {
+      const open = wrapper.classList.toggle("is-expanded");
+      morePanel.hidden = !open;
+      moreBtn.setAttribute("aria-expanded", open ? "true" : "false");
+      if (moreLabel) moreLabel.textContent = open ? "Less" : "More";
+      if (qid != null) {
+        if (open) expandedQueueIds.add(qid);
+        else expandedQueueIds.delete(qid);
+      }
+    });
+  }
+
   const actions = wrapper.querySelector(".actions");
   const previewBtn = wrapper.querySelector(".preview-btn");
   const previewHolder = wrapper.querySelector(".preview-holder");
@@ -964,6 +1049,7 @@ function createQueueItem(item) {
     removeBtn.onclick = async () => {
       try {
         const { deleteFileToo } = askRemoveMode();
+        setTopLoading(true);
         const res = await authFetch(`/api/queue/${item.id}?deleteFile=${deleteFileToo ? "true" : "false"}`, {
           method: "DELETE"
         });
@@ -983,6 +1069,8 @@ function createQueueItem(item) {
         await refreshQueue(true);
       } catch (err) {
         statusText.textContent = err.message;
+      } finally {
+        setTopLoading(false);
       }
     };
     actions.appendChild(removeBtn);
@@ -1003,11 +1091,34 @@ function createQueueItem(item) {
     actions.appendChild(cancelBtn);
   }
 
+  if (item.status === "failed" || item.status === "cancelled") {
+    const retryBtn = document.createElement("button");
+    retryBtn.type = "button";
+    retryBtn.className = "btn btn-retry";
+    retryBtn.innerHTML = "<span class=\"btn-icon\">↻</span><span>Retry</span>";
+    retryBtn.onclick = async () => {
+      try {
+        setButtonLoading(retryBtn, true, "Retry");
+        setTopLoading(true);
+        await queueAction(item.id, "retry");
+        statusText.textContent = `Retry queued for #${item.id}`;
+        await refreshQueue(true);
+      } catch (err) {
+        statusText.textContent = err.message;
+        setButtonLoading(retryBtn, false, "Retry");
+        retryBtn.innerHTML = "<span class=\"btn-icon\">↻</span><span>Retry</span>";
+      } finally {
+        setTopLoading(false);
+      }
+    };
+    actions.appendChild(retryBtn);
+  }
+
   if (item.status === "completed" && item.downloadUrl) {
     const link = document.createElement("a");
     link.className = "btn btn-download";
     link.href = item.downloadUrl;
-    link.innerHTML = "<span class=\"btn-icon\">⬇</span><span>Download Only</span>";
+    link.innerHTML = "<span class=\"btn-icon\">⬇</span><span>Download</span>";
     link.download = item.filename || "";
     actions.appendChild(link);
 
@@ -1047,19 +1158,52 @@ function createQueueItem(item) {
   return wrapper;
 }
 
+let lastQueueSignature = "";
+
+function queueSignature(items) {
+  return JSON.stringify(
+    (items || []).map((item) => [
+      item.id,
+      item.status,
+      item.progress,
+      item.message,
+      item.downloadUrl || "",
+      item.title || "",
+      item.thumbnailUrl || ""
+    ])
+  );
+}
+
 async function refreshQueue(force = false) {
   if (!force && openPreviewItemId !== null) {
     return;
   }
 
+  const showSkeleton = !queueList || queueList.children.length === 0 || queueList.querySelector(".queue-skeleton");
   try {
+    if (showSkeleton) {
+      renderQueueSkeletons(3);
+      setTopLoading(true);
+    }
     const items = await fetchQueue();
+    const signature = queueSignature(items);
+    // Avoid rebuilding cards every poll — that was replaying entrance animations.
+    if (!force && !showSkeleton && signature === lastQueueSignature) {
+      return;
+    }
+    lastQueueSignature = signature;
     lastQueueItems = items;
     pruneSelectionToCurrentItems(items);
     queueList.innerHTML = "";
 
     if (items.length === 0) {
-      queueList.innerHTML = "<p>No videos in queue.</p>";
+      queueList.innerHTML = `
+        <div class="queue-empty">
+          <div class="queue-empty-icon" aria-hidden="true"></div>
+          <p>No videos in queue yet</p>
+          <span>Paste a link above and load options to get started.</span>
+        </div>
+      `;
       syncSelectAllState();
       updateToolbar();
       return;
@@ -1072,6 +1216,8 @@ async function refreshQueue(force = false) {
     updateToolbar();
   } catch (err) {
     statusText.textContent = err.message;
+  } finally {
+    if (showSkeleton) setTopLoading(false);
   }
 }
 
@@ -1089,12 +1235,11 @@ if (loadQualityBtn) {
       return;
     }
 
-    optionButtons.innerHTML = "";
-    optionButtons.innerHTML = "<span class=\"loading-chip\">Loading options...</span>";
-    statusText.textContent = "Fetching latest options for this URL...";
-    loadQualityBtn.disabled = true;
-    loadQualityBtn.textContent = "Loading...";
-    loadQualityBtn.classList.add("is-loading");
+    optionButtons.innerHTML = `<span class="loading-chip">${spinnerMarkup("Fetching options…")}</span>`;
+    statusText.innerHTML = `${spinnerMarkup("Fetching latest options…")}`;
+    statusText.classList.add("is-loading-status");
+    setButtonLoading(loadQualityBtn, true, defaultLoadButtonText);
+    setTopLoading(true);
     try {
       const data = await fetchQualities(url);
       const isPlaylist = typeof data.playlistVideoCount === "number" && data.playlistVideoCount > 1;
@@ -1110,17 +1255,18 @@ if (loadQualityBtn) {
       const pl = isPlaylist
         ? ` Playlist: ${data.playlistVideoCount} videos will be queued when you pick a format.`
         : "";
+      statusText.classList.remove("is-loading-status");
       statusText.textContent = data.title
         ? `Options loaded for: ${data.title}.${pl} Click any button to queue.`
         : `Options loaded.${pl} Click any button to queue.`;
     } catch (err) {
+      statusText.classList.remove("is-loading-status");
       statusText.textContent = err.message;
       optionButtons.innerHTML = "";
       setTrimEnabled(true);
     } finally {
-      loadQualityBtn.disabled = false;
-      loadQualityBtn.textContent = defaultLoadButtonText;
-      loadQualityBtn.classList.remove("is-loading");
+      setButtonLoading(loadQualityBtn, false, defaultLoadButtonText);
+      setTopLoading(false);
     }
   });
 }
@@ -1159,8 +1305,8 @@ if (bulkLoadQualityBtn && bulkUrlsInput) {
       statusText.textContent = "Add at least one URL in the list (first line is used for quality list).";
       return;
     }
-    bulkLoadQualityBtn.disabled = true;
-    bulkLoadQualityBtn.textContent = "Loading...";
+    setButtonLoading(bulkLoadQualityBtn, true, "Load quality options (first URL in list)");
+    setTopLoading(true);
     try {
       const data = await fetchQualities(url);
       renderBulkQualityOptions(data);
@@ -1178,8 +1324,8 @@ if (bulkLoadQualityBtn && bulkUrlsInput) {
         bulkTabMatchOptions.classList.add("hidden");
       }
     } finally {
-      bulkLoadQualityBtn.disabled = false;
-      bulkLoadQualityBtn.textContent = "Load quality options (first URL in list)";
+      setButtonLoading(bulkLoadQualityBtn, false, "Load quality options (first URL in list)");
+      setTopLoading(false);
     }
   });
 }
