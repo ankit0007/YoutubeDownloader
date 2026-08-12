@@ -41,7 +41,8 @@ if (!gotLock) {
   });
 
   function createWindow(port) {
-    mainWindow = new BrowserWindow({
+    const iconPath = path.join(__dirname, "..", "build", "icon.ico");
+    const windowOpts = {
       width: 1280,
       height: 840,
       minWidth: 900,
@@ -53,7 +54,11 @@ if (!gotLock) {
         contextIsolation: true,
         sandbox: true
       }
-    });
+    };
+    if (fs.existsSync(iconPath)) {
+      windowOpts.icon = iconPath;
+    }
+    mainWindow = new BrowserWindow(windowOpts);
 
     mainWindow.once("ready-to-show", () => {
       mainWindow.show();

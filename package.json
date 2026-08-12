@@ -28,7 +28,9 @@
   },
   "devDependencies": {
     "electron": "^35.2.1",
-    "electron-builder": "^26.0.12"
+    "electron-builder": "^26.0.12",
+    "jimp": "^0.22.12",
+    "png-to-ico": "^3.0.2"
   },
   "build": {
     "appId": "com.youtubedownloader.pro",
@@ -59,11 +61,15 @@
       "target": [
         {
           "target": "msi",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "artifactName": "${productName}-${version}-Setup.${ext}",

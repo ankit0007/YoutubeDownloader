@@ -1,2 +1,7 @@
-# Build resources for electron-builder (icons optional).
-# Place app.ico here to customize the MSI / shortcut icon.
+# Build resources for electron-builder
+
+- `icon.ico` — Windows installer / exe / shortcut icon (Option A logo)
+- `icon.png` — 512px master PNG
+- `logo.png` — original logo source copy
+
+Replace `icon.ico` (include 256×256) to change branding, then run `npm run dist:msi`.
