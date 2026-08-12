@@ -12,8 +12,8 @@
   --line-red: rgba(229, 45, 39, 0.22);
   --glow: 0 24px 60px rgba(184, 28, 24, 0.18);
   --radius: 26px;
-  --font: "Manrope", "Segoe UI", sans-serif;
-  --display: "Syne", "Manrope", sans-serif;
+  --font: "Plus Jakarta Sans", "Segoe UI", sans-serif;
+  --display: "Bricolage Grotesque", "Plus Jakarta Sans", sans-serif;
 }
 
 * {
@@ -32,6 +32,10 @@ body {
   line-height: 1.5;
   background: var(--paper);
   overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "ss01" on, "cv11" on;
 }
 
 .stage-bg {
@@ -252,10 +256,10 @@ body {
 h1 {
   margin: 0;
   font-family: var(--display);
-  font-size: clamp(2.2rem, 5vw, 3.35rem);
+  font-size: clamp(2.15rem, 4.8vw, 3.2rem);
   font-weight: 800;
-  letter-spacing: -0.045em;
-  line-height: 0.95;
+  letter-spacing: -0.035em;
+  line-height: 0.98;
   color: var(--ink);
 }
 

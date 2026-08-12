@@ -1,13 +1,14 @@
 {
   "name": "youtube-downloader-queue-app",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Browser based YouTube downloader with queue support.",
   "main": "electron/main.js",
   "scripts": {
     "start": "node server.js",
     "electron": "electron .",
-    "dist:msi": "electron-builder --win msi nsis",
-    "dist": "electron-builder --win msi nsis"
+    "clean:dist": "node scripts/cleanDist.js",
+    "dist:msi": "npm run clean:dist && electron-builder --win msi nsis",
+    "dist": "npm run clean:dist && electron-builder --win msi nsis"
   },
   "keywords": [
     "youtube",
