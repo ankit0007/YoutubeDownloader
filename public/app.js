@@ -92,6 +92,199 @@ const bulkDeleteBtn = document.getElementById("bulk-delete-btn");
 let lastQueueItems = [];
 const selectedIds = new Set();
 
+const nowPlaying = {
+  item: null,
+  seeking: false,
+  dock: document.getElementById("now-playing"),
+  stage: document.getElementById("np-stage"),
+  video: document.getElementById("np-video"),
+  audio: document.getElementById("np-audio"),
+  art: document.getElementById("np-art"),
+  titleEl: document.getElementById("np-title"),
+  subEl: document.getElementById("np-sub"),
+  toggleBtn: document.getElementById("np-toggle"),
+  range: document.getElementById("np-range"),
+  curEl: document.getElementById("np-cur"),
+  durEl: document.getElementById("np-dur"),
+  vol: document.getElementById("np-vol"),
+  expandBtn: document.getElementById("np-expand"),
+  get media() {
+    if (!this.item) return this.audio;
+    return this.item.downloadType === "mp3" ? this.audio : this.video;
+  },
+  playableItems() {
+    return (lastQueueItems || []).filter((item) => item.status === "completed" && item.downloadUrl);
+  },
+  clock(seconds) {
+    if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+    return formatDurationHint(seconds) || "0:00";
+  },
+  showDock() {
+    if (!this.dock) return;
+    this.dock.hidden = false;
+    document.body.classList.add("has-player");
+  },
+  hideDock() {
+    if (!this.dock) return;
+    this.dock.hidden = true;
+    this.dock.classList.add("is-idle");
+    document.body.classList.remove("has-player");
+    if (this.stage) this.stage.classList.add("hidden");
+  },
+  syncButtons() {
+    const playing = this.item && !this.media.paused;
+    if (this.toggleBtn) this.toggleBtn.textContent = playing ? "❚❚" : "▶";
+    if (this.toggleBtn) this.toggleBtn.setAttribute("aria-label", playing ? "Pause" : "Play");
+    document.querySelectorAll(".queue-item").forEach((card) => {
+      const id = normalizeQueueId(card.querySelector(".queue-select-cb")?.dataset.itemId);
+      card.classList.toggle("is-now-playing", Boolean(this.item && id === normalizeQueueId(this.item.id)));
+    });
+    document.querySelectorAll(".preview-btn").forEach((btn) => {
+      const card = btn.closest(".queue-item");
+      const id = normalizeQueueId(card?.querySelector(".queue-select-cb")?.dataset.itemId);
+      if (this.item && id === normalizeQueueId(this.item.id) && !this.media.paused) {
+        btn.textContent = "Pause";
+      } else {
+        btn.textContent = "Play";
+      }
+    });
+  },
+  updateSession() {
+    if (!("mediaSession" in navigator) || !this.item) return;
+    const thumb = thumbnailSrc(this.item);
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: this.item.title || this.item.url || "YouTube Downloader Pro",
+      artist: this.item.downloadType === "mp3" ? "Audio" : "Video",
+      album: "YouTube Downloader Pro",
+      artwork: [{ src: thumb, sizes: "512x512", type: "image/png" }]
+    });
+    navigator.mediaSession.playbackState = this.media.paused ? "paused" : "playing";
+  },
+  bindMedia(el) {
+    if (!el || el.dataset.npBound) return;
+    el.dataset.npBound = "1";
+    el.addEventListener("timeupdate", () => {
+      if (this.seeking || el !== this.media) return;
+      const dur = el.duration || 0;
+      if (this.range && dur > 0) this.range.value = String(Math.round((el.currentTime / dur) * 1000));
+      if (this.curEl) this.curEl.textContent = this.clock(el.currentTime);
+      if (this.durEl) this.durEl.textContent = this.clock(dur);
+    });
+    el.addEventListener("play", () => {
+      this.syncButtons();
+      this.updateSession();
+      if (this.dock) this.dock.classList.remove("is-idle");
+    });
+    el.addEventListener("pause", () => {
+      this.syncButtons();
+      this.updateSession();
+    });
+    el.addEventListener("ended", () => this.next());
+  },
+  async start(item, { autoplay = true } = {}) {
+    if (!item || !item.downloadUrl) return;
+    this.showDock();
+    this.item = item;
+    const isAudio = item.downloadType === "mp3";
+    const thumb = thumbnailSrc(item);
+    if (this.art) this.art.src = thumb;
+    if (this.titleEl) this.titleEl.textContent = item.title || item.url;
+    if (this.subEl) {
+      this.subEl.textContent = isAudio ? "Audio · Best quality" : "Video · Best quality";
+    }
+    if (this.expandBtn) this.expandBtn.style.visibility = isAudio ? "hidden" : "visible";
+    this.bindMedia(this.audio);
+    this.bindMedia(this.video);
+    this.audio.pause();
+    this.video.pause();
+    this.audio.removeAttribute("src");
+    this.video.removeAttribute("src");
+    const el = isAudio ? this.audio : this.video;
+    el.src = item.downloadUrl;
+    el.volume = this.vol ? Number(this.vol.value) : 0.9;
+    if (!isAudio && this.stage) this.stage.classList.remove("hidden");
+    if (isAudio && this.stage) this.stage.classList.add("hidden");
+    try {
+      if (autoplay) await el.play();
+    } catch (_err) {
+      // user gesture fallback
+    }
+    this.syncButtons();
+    this.updateSession();
+  },
+  toggle() {
+    if (!this.item) {
+      const first = this.playableItems()[0];
+      if (first) this.start(first);
+      return;
+    }
+    const el = this.media;
+    if (el.paused) el.play().catch(() => {});
+    else el.pause();
+  },
+  stop() {
+    this.audio.pause();
+    this.video.pause();
+    this.audio.removeAttribute("src");
+    this.video.removeAttribute("src");
+    this.item = null;
+    this.hideDock();
+    this.syncButtons();
+  },
+  jump(delta) {
+    const list = this.playableItems();
+    if (!list.length) return;
+    const currentId = normalizeQueueId(this.item?.id);
+    let idx = list.findIndex((item) => normalizeQueueId(item.id) === currentId);
+    if (idx < 0) idx = 0;
+    const next = list[(idx + delta + list.length) % list.length];
+    this.start(next);
+  },
+  next() {
+    this.jump(1);
+  },
+  prev() {
+    this.jump(-1);
+  },
+  init() {
+    if (!this.dock) return;
+    document.getElementById("np-prev")?.addEventListener("click", () => this.prev());
+    document.getElementById("np-next")?.addEventListener("click", () => this.next());
+    this.toggleBtn?.addEventListener("click", () => this.toggle());
+    document.getElementById("np-stop")?.addEventListener("click", () => this.stop());
+    this.expandBtn?.addEventListener("click", () => {
+      if (!this.item || this.item.downloadType === "mp3") return;
+      this.stage?.classList.toggle("hidden");
+    });
+    this.vol?.addEventListener("input", () => {
+      const v = Number(this.vol.value);
+      this.audio.volume = v;
+      this.video.volume = v;
+    });
+    this.range?.addEventListener("input", () => {
+      this.seeking = true;
+    });
+    this.range?.addEventListener("change", () => {
+      const el = this.media;
+      const dur = el.duration || 0;
+      if (dur > 0) el.currentTime = (Number(this.range.value) / 1000) * dur;
+      this.seeking = false;
+    });
+    if ("mediaSession" in navigator) {
+      try {
+        navigator.mediaSession.setActionHandler("play", () => this.toggle());
+        navigator.mediaSession.setActionHandler("pause", () => this.media.pause());
+        navigator.mediaSession.setActionHandler("previoustrack", () => this.prev());
+        navigator.mediaSession.setActionHandler("nexttrack", () => this.next());
+      } catch (_err) {
+        // media keys optional
+      }
+    }
+  }
+};
+
+nowPlaying.init();
+
 /** SQLite / JSON sometimes gives id as string; Set uses strict equality — normalize everywhere. */
 function normalizeQueueId(value) {
   const n = parseInt(String(value), 10);
@@ -648,7 +841,7 @@ function openItemPreview(wrapper, item, options = {}) {
   if (!previewHolder || !previewBtn) return;
 
   const isAudio = item.downloadType === "mp3";
-  const thumb = item.thumbnailUrl || "https://placehold.co/640x360/1a0c0c/e52d27?text=No+Thumbnail";
+  const thumb = thumbnailSrc(item);
   const trimWorkspace = Boolean(options.trimWorkspace || options.focusTrim);
 
   document.querySelectorAll(".queue-item.is-trim-editing").forEach((el) => {
@@ -940,18 +1133,36 @@ function updateToolbar() {
   bulkDownloadBtn.disabled = !canBulkDownload;
 }
 
+function thumbnailSrc(item) {
+  const id = String(item?.videoId || "").trim();
+  const stored = String(item?.thumbnailUrl || "");
+  const ytThumb = /^[\w-]{11}$/.test(id) ? `https://i.ytimg.com/vi/${id}/hqdefault.jpg` : "";
+  if (stored && !/maxresdefault|\/empty\.jpg/i.test(stored)) return stored;
+  return ytThumb || stored || "/logo.png";
+}
+
+function thumbnailFallback(item) {
+  const id = String(item?.videoId || "").trim();
+  if (/^[\w-]{11}$/.test(id)) return `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
+  return "/logo.png";
+}
+
 function createQueueItem(item) {
   const wrapper = document.createElement("article");
+  const qid = normalizeQueueId(item.id);
   wrapper.className = `queue-item ${
     item.status === "completed" ? "is-complete" : item.status === "trimming" ? "is-active is-trimming" : "is-active"
   }`;
+  if (nowPlaying.item && normalizeQueueId(nowPlaying.item.id) === qid) {
+    wrapper.classList.add("is-now-playing");
+  }
 
-  const qid = normalizeQueueId(item.id);
   const isExpanded = qid != null && expandedQueueIds.has(qid);
   if (isExpanded) wrapper.classList.add("is-expanded");
 
   const titleText = item.title || item.url;
-  const thumb = item.thumbnailUrl || "https://placehold.co/640x360/1a0c0c/e52d27?text=No+Thumbnail";
+  const thumb = thumbnailSrc(item);
+  const thumbFb = thumbnailFallback(item);
 
   const canPreview = item.status === "completed" && Boolean(item.downloadUrl);
   const isAudio = item.downloadType === "mp3";
@@ -967,9 +1178,9 @@ function createQueueItem(item) {
         <label class="card-select-label" title="Select for bulk actions">
           <input type="checkbox" class="queue-select-cb" data-item-id="${qid != null ? qid : ""}" ${qid == null ? "disabled" : ""} />
         </label>
-        <img class="thumb" src="${thumb}" alt="${titleText}" loading="lazy" />
+        <img class="thumb" src="${thumb}" alt="${titleText}" loading="lazy" data-fallback="${thumbFb}" onerror="if(this.dataset.fallback&&this.src!==this.dataset.fallback){this.src=this.dataset.fallback;}else{this.onerror=null;this.src='/logo.png';}" />
         <div class="thumb-overlay">${progress}%</div>
-        ${canPreview ? `<button type="button" class="preview-btn">${isAudio ? "Play" : "Play"}</button>` : ""}
+        ${canPreview ? `<button type="button" class="preview-btn">Play</button>` : ""}
         <div class="preview-holder hidden"></div>
         ${busy ? `<div class="thumb-busy"><span class="ui-spinner ui-spinner-lg"></span></div>` : ""}
       </div>
@@ -983,6 +1194,11 @@ function createQueueItem(item) {
           <span class="brief-chip">${qualityText}</span>
           <span class="brief-chip">#${item.id}</span>
         </div>
+        ${
+          item.status === "failed" && item.message
+            ? `<p class="fail-msg">${String(item.message).replace(/[<>]/g, "")}</p>`
+            : ""
+        }
         <div class="progress-wrapper">
           <div class="progress-bar ${busy ? "is-busy" : ""}" style="width:${progress}%"></div>
         </div>
@@ -1142,16 +1358,16 @@ function createQueueItem(item) {
     actions.appendChild(trimBtn);
   }
 
-  if (previewBtn && previewHolder) {
+  if (previewBtn) {
     previewBtn.dataset.previewType = isAudio ? "audio" : "video";
     previewBtn.onclick = () => {
-      const showingPreview = !previewHolder.classList.contains("hidden");
-      if (showingPreview) {
-        closePreviewCard(wrapper);
-        openPreviewItemId = null;
+      const playingThis =
+        nowPlaying.item && normalizeQueueId(nowPlaying.item.id) === qid && !nowPlaying.media.paused;
+      if (playingThis) {
+        nowPlaying.media.pause();
         return;
       }
-      openItemPreview(wrapper, item);
+      nowPlaying.start(item);
     };
   }
 
@@ -1214,6 +1430,7 @@ async function refreshQueue(force = false) {
     }
     syncSelectAllState();
     updateToolbar();
+    nowPlaying.syncButtons();
   } catch (err) {
     statusText.textContent = err.message;
   } finally {
@@ -1231,7 +1448,7 @@ if (loadQualityBtn) {
   loadQualityBtn.addEventListener("click", async () => {
     const url = urlInput.value.trim();
     if (!url) {
-      statusText.textContent = "Please paste YouTube URL first.";
+      statusText.textContent = "Please paste a YouTube, Instagram, or Facebook URL first.";
       return;
     }
 

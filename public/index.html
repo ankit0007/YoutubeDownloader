@@ -73,11 +73,13 @@
               <p class="brand-kicker">Queue · Quality · Trim</p>
               <h1>YouTube<br />Downloader <span class="accent">Pro</span></h1>
               <p class="brand-tagline">
-                Paste a video, a stack of links, or an entire playlist — watch every job move with live progress.
+                Paste a YouTube, Instagram, or Facebook link — queue videos, playlists, quality, trim, and MP3.
               </p>
               <div class="feature-row" aria-hidden="true">
+                <span class="feature-pill">YouTube</span>
+                <span class="feature-pill">Instagram</span>
+                <span class="feature-pill">Facebook</span>
                 <span class="feature-pill">Playlist expand</span>
-                <span class="feature-pill">Best quality</span>
                 <span class="feature-pill">Visual trim</span>
                 <span class="feature-pill">MP3 extract</span>
               </div>
@@ -114,8 +116,9 @@
               <form id="queue-form" class="queue-form">
                 <input
                   id="url-input"
-                  type="url"
-                  placeholder="Video or playlist URL — https://youtube.com/…"
+                  type="text"
+                  inputmode="url"
+                  placeholder="youtube.com/...  instagram.com/reel/...  facebook.com/reel/..."
                   required
                 />
                 <button id="load-quality-btn" type="button" class="secondary-btn">Load Options</button>
@@ -142,7 +145,7 @@
                 id="bulk-urls-input"
                 class="bulk-urls-input"
                 rows="5"
-                placeholder="https://www.youtube.com/watch?v=...&#10;https://www.youtube.com/playlist?list=..."
+                placeholder="https://www.youtube.com/watch?v=...&#10;https://www.instagram.com/reel/...&#10;https://www.facebook.com/reel/..."
               ></textarea>
               <div class="bulk-tab-top-actions">
                 <button type="button" id="bulk-load-quality-btn" class="secondary-btn">
@@ -208,6 +211,35 @@
         </section>
       </section>
     </main>
+
+    <div id="now-playing" class="now-playing is-idle" hidden>
+      <div id="np-stage" class="np-stage hidden">
+        <video id="np-video" playsinline></video>
+      </div>
+      <div class="np-bar">
+        <img id="np-art" class="np-art" alt="" />
+        <div class="np-meta">
+          <div id="np-title" class="np-title">Not playing</div>
+          <div id="np-sub" class="np-sub">Pick a completed file and hit Play</div>
+        </div>
+        <div class="np-transport">
+          <button type="button" id="np-prev" class="np-icon-btn" title="Previous" aria-label="Previous">⏮</button>
+          <button type="button" id="np-toggle" class="np-play-btn" title="Play" aria-label="Play">▶</button>
+          <button type="button" id="np-next" class="np-icon-btn" title="Next" aria-label="Next">⏭</button>
+        </div>
+        <div class="np-seek">
+          <span id="np-cur">0:00</span>
+          <input id="np-range" type="range" min="0" max="1000" value="0" step="1" />
+          <span id="np-dur">0:00</span>
+        </div>
+        <div class="np-extra">
+          <button type="button" id="np-expand" class="np-text-btn" title="Video stage">Video</button>
+          <input id="np-vol" type="range" min="0" max="1" step="0.01" value="0.9" title="Volume" />
+          <button type="button" id="np-stop" class="np-icon-btn" title="Stop" aria-label="Stop">✕</button>
+        </div>
+      </div>
+      <audio id="np-audio" preload="metadata"></audio>
+    </div>
 
     <script src="/app.js"></script>
   </body>

@@ -1090,6 +1090,14 @@ h2 {
   gap: 6px;
 }
 
+.fail-msg {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: #b91c1c;
+  line-height: 1.35;
+}
+
 .brief-chip {
   font-size: 11px;
   font-weight: 700;
@@ -1855,4 +1863,171 @@ h2 {
   .feature-row {
     gap: 6px;
   }
+}
+
+body.has-player {
+  padding-bottom: 96px;
+}
+
+.now-playing {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 80;
+  border-radius: 22px;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(28, 12, 12, 0.96), rgba(18, 10, 10, 0.98));
+  border: 1px solid rgba(229, 45, 39, 0.35);
+  box-shadow: 0 18px 48px rgba(18, 10, 10, 0.45);
+  color: #fff;
+  backdrop-filter: blur(16px);
+}
+
+.now-playing.is-idle {
+  opacity: 0.92;
+}
+
+.np-stage {
+  position: relative;
+  background: #000;
+  max-height: min(52vh, 420px);
+}
+
+.np-stage.hidden {
+  display: none;
+}
+
+.np-stage video {
+  display: block;
+  width: 100%;
+  max-height: min(52vh, 420px);
+  object-fit: contain;
+  background: #000;
+}
+
+.np-bar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1.2fr) auto minmax(180px, 1.4fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 10px 14px;
+}
+
+.np-art {
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  object-fit: cover;
+  background: #2a1212;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+}
+
+.np-meta {
+  min-width: 0;
+}
+
+.np-title {
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.np-sub {
+  font-size: 11px;
+  color: #f5c2c0;
+  margin-top: 2px;
+}
+
+.np-transport {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.np-icon-btn,
+.np-text-btn,
+.np-play-btn {
+  border: 0;
+  cursor: pointer;
+  font-family: var(--font);
+  color: #fff;
+  background: transparent;
+}
+
+.np-icon-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  font-size: 14px;
+}
+
+.np-icon-btn:hover,
+.np-text-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.np-play-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--red-hot), var(--red-deep));
+  font-size: 16px;
+  box-shadow: 0 8px 18px rgba(229, 45, 39, 0.35);
+}
+
+.np-text-btn {
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 800;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.np-seek {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: #fecaca;
+}
+
+.np-seek input,
+.np-extra input {
+  accent-color: var(--red-hot);
+  width: 100%;
+}
+
+.np-extra {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.np-extra input[type="range"] {
+  width: 84px;
+}
+
+.queue-item.is-now-playing {
+  border-color: rgba(229, 45, 39, 0.55);
+  box-shadow: 0 14px 30px rgba(229, 45, 39, 0.18);
+}
+
+@media (max-width: 900px) {
+  .np-bar {
+    grid-template-columns: auto 1fr auto;
+    grid-template-areas:
+      "art meta extra"
+      "seek seek seek"
+      "transport transport transport";
+  }
+  .np-art { grid-area: art; }
+  .np-meta { grid-area: meta; }
+  .np-extra { grid-area: extra; }
+  .np-seek { grid-area: seek; }
+  .np-transport { grid-area: transport; justify-content: center; }
 }

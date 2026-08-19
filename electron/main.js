@@ -73,7 +73,8 @@ if (!gotLock) {
       show: false,
       autoHideMenuBar: true,
       webPreferences: {
-        nodeIntegration: false,
+        backgroundThrottling: false,
+      nodeIntegration: false,
         contextIsolation: true,
         sandbox: true
       }
