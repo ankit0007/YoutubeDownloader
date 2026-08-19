@@ -8,24 +8,17 @@ const sqlite3 = require("sqlite3").verbose();
 const ytdl = require("@distube/ytdl-core");
 const ffmpegStaticPath = require("ffmpeg-static");
 const ytDlpFactory = require("yt-dlp-exec");
-
-/** Electron packs binaries under app.asar.unpacked; spawn cannot run files inside app.asar. */
-function resolveAsarUnpackedPath(filePath) {
-  if (!filePath || typeof filePath !== "string") return filePath;
-  if (filePath.includes(`${path.sep}app.asar.unpacked${path.sep}`)) return filePath;
-  if (filePath.includes(`${path.sep}app.asar${path.sep}`)) {
-    return filePath.replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`);
-  }
-  if (filePath.endsWith(`${path.sep}app.asar`)) {
-    return `${filePath}.unpacked`;
-  }
-  return filePath;
-}
+const { resolveAsarUnpackedPath, createEngine } = require("./lib/ytDlpEngine");
 
 const ytDlpConstants = require(path.join(path.dirname(require.resolve("yt-dlp-exec")), "constants.js"));
 const ffmpegPath = resolveAsarUnpackedPath(process.env.FFMPEG_BIN || ffmpegStaticPath);
-const ytDlpBinaryPath = resolveAsarUnpackedPath(ytDlpConstants.YOUTUBE_DL_PATH);
-const ytDlp = ytDlpFactory.create(ytDlpBinaryPath);
+const ytEngine = createEngine({
+  bundledYtDlpPath: resolveAsarUnpackedPath(process.env.YOUTUBE_DL_PATH || ytDlpConstants.YOUTUBE_DL_PATH),
+  ffmpegPath
+});
+let ytDlp = ytDlpFactory.create(ytEngine.binaryPath);
+const METADATA_TIMEOUT_MS = 120000;
+const DOWNLOAD_TIMEOUT_MS = 45 * 60 * 1000;
 
 const app = express();
 const DEFAULT_PORT = Number(process.env.PORT || 3000);
@@ -413,21 +406,71 @@ async function recomputeGuestCompletedFromQueue(guestId) {
 }
 
 function withYtDlpDefaults(options = {}) {
-  const defaults = {
-    noPlaylist: true,
-    noWarnings: true,
-    ...options
-  };
-  // Prefer system/Electron-friendly Node when available; avoid forcing a missing `node` in packaged apps.
-  if (!defaults.jsRuntimes && process.env.YD_JS_RUNTIME) {
-    defaults.jsRuntimes = process.env.YD_JS_RUNTIME;
-  } else if (!defaults.jsRuntimes && !process.versions.electron) {
-    defaults.jsRuntimes = "node";
-  }
-  if (ffmpegPath && !defaults.ffmpegLocation) {
-    defaults.ffmpegLocation = ffmpegPath;
-  }
-  return defaults;
+  return ytEngine.commonFlags(options);
+}
+
+function lastUsefulError(stderrData, fallback) {
+  const text = String(stderrData || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("[debug]"))
+    .slice(-6)
+    .join(" ");
+  return text || fallback;
+}
+
+function spawnYtDlpProcess(url, options, { timeoutMs, onChunk, task } = {}) {
+  return new Promise((resolve, reject) => {
+    const argv = ytDlpFactory.args(url, withYtDlpDefaults(options));
+    const child = spawn(ytEngine.binaryPath, argv, { windowsHide: true });
+    if (task) task.ytDlpProcess = child;
+
+    let stdoutData = "";
+    let stderrData = "";
+    let settled = false;
+
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (task) task.ytDlpProcess = null;
+      fn(value);
+    };
+
+    const timer = timeoutMs
+      ? setTimeout(() => {
+          try {
+            child.kill();
+          } catch (_err) {
+            // ignore
+          }
+          finish(
+            reject,
+            new Error("YouTube request timed out. Check internet, then tap Retry.")
+          );
+        }, timeoutMs)
+      : null;
+
+    const onData = (chunk, isErr) => {
+      const text = String(chunk || "");
+      if (isErr) stderrData += text;
+      else stdoutData += text;
+      if (onChunk) onChunk(text);
+    };
+
+    if (child.stdout) child.stdout.on("data", (chunk) => onData(chunk, false));
+    if (child.stderr) child.stderr.on("data", (chunk) => onData(chunk, true));
+    child.on("error", (err) => finish(reject, err));
+    child.on("close", (code) => {
+      if (code !== 0) {
+        return finish(
+          reject,
+          new Error(lastUsefulError(stderrData, `yt-dlp exited with code ${code}`))
+        );
+      }
+      finish(resolve, { stdoutData, stderrData });
+    });
+  });
 }
 
 function runDb(sql, params = []) {
@@ -724,6 +767,12 @@ function getVideoIdFromUrl(url) {
   }
 }
 
+function canonicalizeYoutubeWatchUrl(url) {
+  const videoId = getVideoIdFromUrl(url);
+  if (videoId) return `https://www.youtube.com/watch?v=${videoId}`;
+  return String(url || "").trim();
+}
+
 function qualityLabel(height) {
   if (height >= 4320) return `${height}p (8K)`;
   if (height >= 2160) return `${height}p (4K / Ultra HD)`;
@@ -752,70 +801,28 @@ function buildQualityOptionsFromMetadata(metadata) {
 }
 
 async function getVideoMetadataWithYtDlp(url) {
-  return new Promise((resolve, reject) => {
-    const child = ytDlp.exec(
-      url,
-      withYtDlpDefaults({
-        dumpSingleJson: true,
-        skipDownload: true
-      })
-    );
-
-    let stdoutData = "";
-    let stderrData = "";
-    if (child.stdout) {
-      child.stdout.on("data", (chunk) => {
-        stdoutData += String(chunk || "");
-      });
-    }
-    if (child.stderr) {
-      child.stderr.on("data", (chunk) => {
-        stderrData += String(chunk || "");
-      });
-    }
-
-    child.on("error", (err) => reject(err));
-    child.on("close", (code) => {
-      if (code !== 0) {
-        return reject(new Error(stderrData || `yt-dlp metadata exited with code ${code}`));
-      }
-      try {
-        const json = JSON.parse(stdoutData);
-        return resolve(json);
-      } catch (_err) {
-        return reject(new Error("Failed to parse yt-dlp metadata output."));
-      }
-    });
-  });
+  const { stdoutData } = await spawnYtDlpProcess(
+    url,
+    {
+      dumpSingleJson: true,
+      skipDownload: true
+    },
+    { timeoutMs: METADATA_TIMEOUT_MS }
+  );
+  try {
+    return JSON.parse(stdoutData);
+  } catch (_err) {
+    throw new Error("Failed to parse yt-dlp metadata output.");
+  }
 }
 
 async function runYtDlpDumpJson(url, ytDlpOptions) {
-  return new Promise((resolve, reject) => {
-    const child = ytDlp.exec(url, withYtDlpDefaults(ytDlpOptions));
-    let stdoutData = "";
-    let stderrData = "";
-    if (child.stdout) {
-      child.stdout.on("data", (chunk) => {
-        stdoutData += String(chunk || "");
-      });
-    }
-    if (child.stderr) {
-      child.stderr.on("data", (chunk) => {
-        stderrData += String(chunk || "");
-      });
-    }
-    child.on("error", (err) => reject(err));
-    child.on("close", (code) => {
-      if (code !== 0) {
-        return reject(new Error(stderrData || `yt-dlp exited with code ${code}`));
-      }
-      try {
-        return resolve(JSON.parse(stdoutData));
-      } catch (_err) {
-        return reject(new Error("Failed to parse yt-dlp JSON output."));
-      }
-    });
-  });
+  const { stdoutData } = await spawnYtDlpProcess(url, ytDlpOptions, { timeoutMs: METADATA_TIMEOUT_MS });
+  try {
+    return JSON.parse(stdoutData);
+  } catch (_err) {
+    throw new Error("Failed to parse yt-dlp JSON output.");
+  }
 }
 
 function watchUrlFromFlatEntry(entry) {
@@ -895,8 +902,13 @@ async function expandYoutubeInputToWatchUrls(rawInput) {
   try {
     const uObj = new URL(url);
     const host = uObj.hostname.toLowerCase();
-    if ((host.endsWith(".youtube.com") || host === "youtube.com" || host === "youtu.be") &&
-      uObj.searchParams.get("list")) {
+    const listId = uObj.searchParams.get("list") || "";
+    const isMixOrRadio = /^RD/i.test(listId);
+    if (
+      (host.endsWith(".youtube.com") || host === "youtube.com" || host === "youtu.be") &&
+      listId &&
+      !isMixOrRadio
+    ) {
       hasListParam = true;
     }
   } catch (_e) {
@@ -921,18 +933,18 @@ async function expandYoutubeInputToWatchUrls(rawInput) {
     if (ytdl.validateURL(url)) {
       if (hasListParam) {
         const fromPl = await extractFlat();
-        if (fromPl.length > 0) return dedupeWatchUrlsPreserveOrder(fromPl);
+        if (fromPl.length > 0) return dedupeWatchUrlsPreserveOrder(fromPl.map(canonicalizeYoutubeWatchUrl));
       }
-      return dedupeWatchUrlsPreserveOrder([url]);
+      return dedupeWatchUrlsPreserveOrder([canonicalizeYoutubeWatchUrl(url)]);
     }
     const fromPl = await extractFlat();
-    if (fromPl.length > 0) return dedupeWatchUrlsPreserveOrder(fromPl);
+    if (fromPl.length > 0) return dedupeWatchUrlsPreserveOrder(fromPl.map(canonicalizeYoutubeWatchUrl));
   } catch (_err) {
     /* fall through */
   }
 
   if (ytdl.validateURL(url)) {
-    return dedupeWatchUrlsPreserveOrder([url]);
+    return dedupeWatchUrlsPreserveOrder([canonicalizeYoutubeWatchUrl(url)]);
   }
   return [];
 }
@@ -964,7 +976,7 @@ async function insertQueueItemIfEligible(url, qualityPreference, downloadType, t
   if (url == null || typeof url !== "string" || !url.trim()) {
     return { ok: false, error: "Please provide a valid YouTube URL." };
   }
-  const normalizedUrl = url.trim();
+  const normalizedUrl = canonicalizeYoutubeWatchUrl(url.trim());
   if (!ytdl.validateURL(normalizedUrl)) {
     return { ok: false, error: "Please provide a valid YouTube URL." };
   }
@@ -1179,7 +1191,7 @@ async function loadQueue() {
     // Column already exists in existing databases.
   }
 
-  await runDb("UPDATE queue_items SET status = 'queued', message = 'Resuming after restart...' WHERE status IN ('downloading', 'merging')");
+  await runDb("UPDATE queue_items SET status = 'queued', progress = 0, message = 'Resuming after restart...' WHERE status IN ('downloading', 'merging', 'trimming')");
   const rows = await allDb("SELECT * FROM queue_items ORDER BY id DESC");
   queue = rows.map(toItem);
 
@@ -1268,27 +1280,16 @@ async function runYtDlpWithProgress(item, task, ytdlpOptions, progressConfig) {
   item.progress = Math.max(item.progress, rangeStart);
   await persistItem(item);
 
-  await new Promise((resolve, reject) => {
-    const child = ytDlp.exec(item.url, withYtDlpDefaults(ytdlpOptions));
-    task.ytDlpProcess = child;
-
-    const onChunk = (chunk) => {
-      const percent = parseProgressPercent(String(chunk || ""));
+  await spawnYtDlpProcess(item.url, ytdlpOptions, {
+    timeoutMs: DOWNLOAD_TIMEOUT_MS,
+    task,
+    onChunk: (chunkText) => {
+      const percent = parseProgressPercent(String(chunkText || ""));
       if (percent === null) return;
       updateProgressInRange(item, percent, rangeStart, rangeEnd);
-    };
-
-    if (child.stdout) child.stdout.on("data", onChunk);
-    if (child.stderr) child.stderr.on("data", onChunk);
-
-    child.on("error", reject);
-    child.on("close", (code) => {
-      task.ytDlpProcess = null;
-      if (code !== 0) return reject(new Error(`yt-dlp exited with code ${code}`));
-      item.progress = Math.max(item.progress, rangeEnd);
-      return resolve();
-    });
+    }
   });
+  item.progress = Math.max(item.progress, rangeEnd);
 }
 
 async function downloadWithYtDlpFallback(item, task) {
@@ -1411,6 +1412,9 @@ async function processQueueItem(item) {
     item.status = "downloading";
     item.message = "Fetching video info...";
     item.progress = 0;
+    if (getVideoIdFromUrl(item.url)) {
+      item.url = canonicalizeYoutubeWatchUrl(item.url);
+    }
     await persistItem(item);
 
     const metadata = await getVideoMetadataWithYtDlp(item.url);
@@ -2156,6 +2160,11 @@ async function startServer(options = {}) {
   }
 
   ensureDataPaths(options.dataDir || process.env.YD_DATA_DIR || null);
+  try {
+    await ytEngine.prepare(dataRoot);
+  } catch (err) {
+    console.warn("yt-dlp tools prepare warning:", err.message || err);
+  }
   await loadQueue();
 
   const preferred = Number(options.port || process.env.PORT || DEFAULT_PORT);

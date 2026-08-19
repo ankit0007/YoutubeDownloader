@@ -1,6 +1,6 @@
 {
   "name": "youtube-downloader-queue-app",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Browser based YouTube downloader with queue support.",
   "main": "electron/main.js",
   "scripts": {
@@ -45,6 +45,7 @@
     "afterPack": "./scripts/afterPack.js",
     "files": [
       "electron/**/*",
+      "lib/**/*",
       "server.js",
       "public/**/*",
       "package.json",
